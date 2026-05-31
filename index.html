@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Meu Jogo Voxel 3D</title>
+    <link rel="stylesheet" href="style.css">
+    
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+          "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+        }
+      }
+    </script>
+</head>
+<body>
+
+    <div id="crosshair">+</div>
+
+    <div id="menu">
+        <h1>Meu Jogo Voxel</h1>
+        <p>Clique na tela para jogar</p>
+        <p style="font-size: 0.8rem; margin-top: 20px;">(Pressione ESC para soltar o mouse)</p>
+    </div>
+
+    <script type="module" src="src/main.js"></script>
+    
+</body>
+</html>
