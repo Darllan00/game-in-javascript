@@ -2,12 +2,19 @@ import * as THREE from 'three';
 
 export const CONFIG = {
     terreno: {
-        tamanhoGrade: 5000,
+        tamanhoGrade: 50000,
         alturaOlhos: 2,
         tamanhoChunk: 32,
         distanciaChunks: 400,
         distanciaPreloadChunks: 1,
         passoTerreno: 2,
+        tempoGeracaoChunksMs: 3.5,
+        lodChunks: [
+            { distancia: 2, passoTerreno: 2 },
+            { distancia: 6, passoTerreno: 4 },
+            { distancia: 12, passoTerreno: 8 },
+            { distancia: 9999, passoTerreno: 16 }
+        ],
         nivelDoMar: 0
     },
     movimento: {

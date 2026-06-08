@@ -14,14 +14,6 @@ const DRY_TINT = new THREE.Color(0xb09a55);
 const colorBuffer = new THREE.Color();
 const tempColor = new THREE.Color();
 
-export function sampleHeight(heightMap, x, z, sampleTerrain) {
-    if (heightMap.getHeight) {
-        return heightMap.getHeight(x, z) ?? sampleTerrain(x, z).height;
-    }
-    const key = `${x},${z}`;
-    return heightMap.get(key) ?? sampleTerrain(x, z).height;
-}
-
 function getTerrainColor(sample, y, target) {
     const { weights: w } = sample;
 
@@ -60,7 +52,7 @@ function getTerrainColor(sample, y, target) {
     return target;
 }
 
-export function createChunkTerrainGeometry(startX, startZ, endX, endZ, heightMap, sampleTerrain, terrainStep) {
+export function createChunkTerrainGeometry(startX, startZ, endX, endZ, sampleTerrain, terrainStep) {
     const width = endX - startX;
     const depth = endZ - startZ;
     const widthSegments = Math.max(1, Math.round(width / terrainStep));
@@ -70,31 +62,14 @@ export function createChunkTerrainGeometry(startX, startZ, endX, endZ, heightMap
 
     const positions = geometry.attributes.position;
     const colors = new Float32Array(positions.count * 3);
-    const gridStartX = startX - terrainStep;
-    const gridStartZ = startZ - terrainStep;
-    const gridColumnCount = Math.floor((endX - startX) / terrainStep) + 3;
-    const gridRowCount = Math.floor((endZ - startZ) / terrainStep) + 3;
-    const heightGrid = new Float32Array(gridColumnCount * gridRowCount);
-
-    for (let row = 0; row < gridRowCount; row++) {
-        const z = gridStartZ + row * terrainStep;
-        for (let column = 0; column < gridColumnCount; column++) {
-            const x = gridStartX + column * terrainStep;
-            heightGrid[row * gridColumnCount + column] = sampleHeight(heightMap, x, z, sampleTerrain);
-        }
-    }
-
-    function getGridHeight(x, z) {
-        const column = Math.round((x - gridStartX) / terrainStep);
-        const row = Math.round((z - gridStartZ) / terrainStep);
-        return heightGrid[row * gridColumnCount + column];
-    }
 
     let vertexIndex = 0;
-    for (let z = startZ; z <= endZ; z += terrainStep) {
-        for (let x = startX; x <= endX; x += terrainStep) {
+    for (let row = 0; row <= depthSegments; row++) {
+        const z = startZ + row * terrainStep;
+        for (let column = 0; column <= widthSegments; column++) {
+            const x = startX + column * terrainStep;
             const sample = sampleTerrain(x, z);
-            const y = getGridHeight(x, z);
+            const y = sample.height;
 
             positions.setY(vertexIndex, y);
 
