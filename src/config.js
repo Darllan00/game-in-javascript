@@ -5,7 +5,7 @@ export const CONFIG = {
         tamanhoGrade: 50000,
         alturaOlhos: 2,
         tamanhoChunk: 32,
-        distanciaChunks: 400,
+        distanciaChunks: 40,
         distanciaPreloadChunks: 1,
         passoTerreno: 2,
         tempoGeracaoChunksMs: 3.5,
@@ -39,6 +39,12 @@ export const CONFIG = {
                 pixelRatioMax: 2
             }
         }
+    },
+    cicloDiaNoite: {
+        duracaoMinutos: 1,
+        atualizacoesPorSegundo: 12,
+        raioAstros: 900,
+        quantidadeEstrelas: 700
     }
 };
 

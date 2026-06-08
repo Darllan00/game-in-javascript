@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 
 export function createTerrainMaterial() {
-    return new THREE.MeshBasicMaterial({
+    return new THREE.MeshLambertMaterial({
         color: 0xffffff,
         vertexColors: true,
         fog: true,

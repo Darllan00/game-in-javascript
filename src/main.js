@@ -7,6 +7,7 @@ import { updatePhysics } from './physics.js';
 import { CONFIG } from './config.js';
 import { buildSeedUrl, createRandomSeedText, resolveWorldSeed } from './seed.js';
 import { createPerformanceDiagnostics } from './performanceDiagnostics.js';
+import { createDayNightCycle } from './dayNightCycle.js';
 
 const worldSeed = resolveWorldSeed();
 setTerrainSeed(worldSeed.numeric);
@@ -15,6 +16,7 @@ const { controls, player } = setupControls(camera);
 scene.add(player);
 
 const diagnostics = createPerformanceDiagnostics(renderer);
+const dayNightCycle = createDayNightCycle(scene, camera);
 const { getHeight, updateChunks, dispose } = createTerrain(scene, diagnostics);
 
 player.position.set(0, getHeight(0, 0) + CONFIG.terreno.alturaOlhos + 2, 0);
@@ -70,6 +72,7 @@ function loop() {
 
     const delta = clock.getDelta();
     updateFpsCounter(delta);
+    dayNightCycle.update(delta);
 
     if (controls.isLocked) {
         updatePhysics(delta, controls, player, keys, state, getHeight);
@@ -87,4 +90,7 @@ window.addEventListener('resize', () => {
     renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
-window.addEventListener('beforeunload', dispose);
+window.addEventListener('beforeunload', () => {
+    dayNightCycle.dispose();
+    dispose();
+});
