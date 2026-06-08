@@ -2,30 +2,44 @@ import * as THREE from 'three';
 
 export const CONFIG = {
     terreno: {
-        tamanhoGrade: 500,
-        alturaOlhos: 2
+        tamanhoGrade: 5000,
+        alturaOlhos: 2,
+        tamanhoChunk: 32,
+        distanciaChunks: 400,
+        distanciaPreloadChunks: 1,
+        passoTerreno: 2,
+        nivelDoMar: 0
     },
     movimento: {
-        velocidade: 15,
+        velocidade: 300,
         gravidade: 30,
-        pulo: 12
+        pulo: 200,
+        alturaMaximaPasso: 1.35
     },
-    ciclo: {
-        duracao: 1200,
-        tempoInicial: 300,
-        velocidadeTeste: 100,
-        raioOrbita: 200
+    renderizacao: {
+        qualidade: 'balanced',
+        perfis: {
+            low: {
+                antialias: false,
+                pixelRatioMax: 1
+            },
+            balanced: {
+                antialias: true,
+                pixelRatioMax: 1.25
+            },
+            high: {
+                antialias: true,
+                pixelRatioMax: 2
+            }
+        }
     }
 };
 
+export function getRenderQualityProfile() {
+    return CONFIG.renderizacao.perfis[CONFIG.renderizacao.qualidade]
+        ?? CONFIG.renderizacao.perfis.balanced;
+}
+
 export const COLORS = {
-    dia: new THREE.Color(0x6bb8ff),
-    noite: new THREE.Color(0x050510),
-    crepusculo: new THREE.Color(0x4f5d8a),
-    luzDia: new THREE.Color(0xfff5e6),
-    luzNoite: new THREE.Color(0xb9c8ff),
-    hemiCeuDia: new THREE.Color(0xffffff),
-    hemiCeuNoite: new THREE.Color(0x0b1020),
-    hemiChaoDia: new THREE.Color(0x2b3e2b),
-    hemiChaoNoite: new THREE.Color(0x080814)
+    dia: new THREE.Color(0x6bb8ff)
 };

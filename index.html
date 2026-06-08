@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Meu Jogo Voxel 3D</title>
+    <title>Meu Mundo Procedural 3D</title>
     <link rel="stylesheet" href="style.css">
     
     <script type="importmap">
@@ -18,9 +18,17 @@
 <body>
 
     <div id="crosshair">+</div>
+    <div id="fps-counter">-- FPS</div>
 
     <div id="menu">
-        <h1>Meu Jogo Voxel</h1>
+        <h1>Meu Mundo Procedural</h1>
+        <div id="seed-controls" data-menu-control>
+            <div class="seed-label">Seed: <span id="seed-value">...</span></div>
+            <div class="seed-actions">
+                <button id="copy-seed" type="button">Copiar seed</button>
+                <button id="new-world" type="button">Novo mundo</button>
+            </div>
+        </div>
         <p>Clique na tela para jogar</p>
         <p style="font-size: 0.8rem; margin-top: 20px;">(Pressione ESC para soltar o mouse)</p>
     </div>

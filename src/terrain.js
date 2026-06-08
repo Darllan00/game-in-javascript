@@ -1,406 +1,254 @@
 import * as THREE from 'three';
 import { CONFIG } from './config.js';
+import {
+    biomeWeights,
+    calculateTerrainHeight,
+    continentalness,
+    moisture,
+    temperature
+} from './biomes.js';
+import { setNoiseSeed } from './noise.js';
+import { buildChunkGroup, getChunkBounds, getChunkKey } from './chunks.js';
+import { createTerrainMaterial } from './materials.js';
+import { createChunkTerrainGeometry } from './terrainMesh.js';
+import { createChunkSampleGrid } from './chunkSampleGrid.js';
 
-const TERRAIN_STEP = 1;
-const TREE_SCAN_STEP = 3;
-const GRASS_SCAN_STEP = 2;
+const TERRAIN_STEP = CONFIG.terreno.passoTerreno;
 
-const CHUNK_SIZE = 32;
-const VIEW_DISTANCE = 6; // 2 => carrega 5x5 chunks ao redor do jogador
-
-const OAK_CHANCE = 0.0045;
-const PINE_CHANCE = 0.016;
-const SUPER_OAK_CHANCE = 0.003; // Chance
-
-const GRASS_SMALL_CHANCE = 0.055;
-const GRASS_LARGE_CHANCE = 0.18;
-
-const OAK_MIN_HEIGHT = -2;
-const OAK_MAX_HEIGHT = 18;
-
-const PINE_MIN_HEIGHT = 4;
-const PINE_MAX_HEIGHT = 32;
+const CHUNK_SIZE = CONFIG.terreno.tamanhoChunk;
+const VIEW_DISTANCE = CONFIG.terreno.distanciaChunks;
+const PREFETCH_DISTANCE = VIEW_DISTANCE + CONFIG.terreno.distanciaPreloadChunks;
+const CHUNKS_PER_FRAME = 1;
+const INITIAL_CHUNK_BURST = 9;
+const HEIGHT_CACHE_LIMIT = 64;
+const TERRAIN_SAMPLE_CACHE_LIMIT = 65536;
 
 const WORLD_MIN = -CONFIG.terreno.tamanhoGrade / 2;
-const WORLD_MAX = CONFIG.terreno.tamanhoGrade / 2 - 1;
+const WORLD_MAX = CONFIG.terreno.tamanhoGrade / 2;
 
-function hash2D(x, z, seed = 0) {
-    const s = Math.sin(x * 127.1 + z * 311.7 + seed * 74.7) * 43758.5453123;
-    return s - Math.floor(s);
+export function setTerrainSeed(numericSeed) {
+    setNoiseSeed(numericSeed);
 }
 
-function getTerrainHeightFormula(x, z) {
-    const ondaGigante = Math.sin(x / 45) * 12 + Math.cos(z / 45) * 12;
-    const ondaMedia = Math.sin(x / 13 + z / 17) * 5;
-    const ondaDetalhes = Math.sin(x / 5) * 1.5 + Math.cos(z / 7) * 1.5;
-    return Math.round(ondaGigante + ondaMedia + ondaDetalhes);
-}
+function createTerrainSample(x, z) {
+    const c = continentalness(x, z);
+    const weights = biomeWeights(c);
+    const moistureValue = moisture(x, z);
+    const temperatureValue = temperature(x, z);
+    const rawHeight = calculateTerrainHeight(x, z, weights);
 
-function getSlopeFromHeightMap(heightMap, x, z) {
-    const center = heightMap.get(`${x},${z}`);
-    if (center === undefined) return Infinity;
-
-    const neighbors = [
-        heightMap.get(`${x + 1},${z}`),
-        heightMap.get(`${x - 1},${z}`),
-        heightMap.get(`${x},${z + 1}`),
-        heightMap.get(`${x},${z - 1}`)
-    ].filter(v => v !== undefined);
-
-    let maxDiff = 0;
-    for (const h of neighbors) {
-        maxDiff = Math.max(maxDiff, Math.abs(center - h));
-    }
-    return maxDiff;
-}
-
-function addMatrix(list, x, y, z, rx = 0, ry = 0, rz = 0, sx = 1, sy = 1, sz = 1) {
-    const matrix = new THREE.Matrix4();
-    const pos = new THREE.Vector3(x, y, z);
-    const quat = new THREE.Quaternion().setFromEuler(new THREE.Euler(rx, ry, rz));
-    const scale = new THREE.Vector3(sx, sy, sz);
-    matrix.compose(pos, quat, scale);
-    list.push(matrix);
-}
-
-function criarCarvalho(x, y, z, trunkList, leafList) {
-    const trunkHeight = 4 + Math.floor(hash2D(x, z, 1) * 2);
-
-    for (let i = 1; i <= trunkHeight; i++) {
-        addMatrix(trunkList, x, y + i, z);
-    }
-
-    const topY = y + trunkHeight;
-
-    for (let dx = -2; dx <= 2; dx++) {
-        for (let dz = -2; dz <= 2; dz++) {
-            for (let dy = 0; dy <= 3; dy++) {
-                const dist = Math.abs(dx) + Math.abs(dz) + dy;
-                const isCenterTop = dy === 3 && Math.abs(dx) <= 1 && Math.abs(dz) <= 1;
-
-                if (dist <= 4 || isCenterTop) {
-                    addMatrix(leafList, x + dx, topY + dy, z + dz);
-                }
-            }
-        }
-    }
-
-    addMatrix(leafList, x, topY + 4, z);
-}
-
-function criarPinheiroGigante(x, y, z, trunkList, leafList) {
-    const baseX = x;
-    const baseZ = z;
-    const trunkHeight = 14 + Math.floor(hash2D(x, z, 2) * 10);
-
-    // Tronco 2x2
-    for (let i = 0; i <= trunkHeight; i++) {
-        addMatrix(trunkList, baseX, y + i, baseZ);
-        addMatrix(trunkList, baseX + 1, y + i, baseZ);
-        addMatrix(trunkList, baseX, y + i, baseZ + 1);
-        addMatrix(trunkList, baseX + 1, y + i, baseZ + 1);
-    }
-
-    const crownStart = y + Math.floor(trunkHeight * 0.35);
-    const crownTop = y + trunkHeight + 1;
-
-    // Copa correta: larga embaixo, estreita em cima
-    for (let yy = crownStart; yy <= crownTop; yy++) {
-        const t = (yy - crownStart) / Math.max(1, crownTop - crownStart);
-        const radius = Math.max(1, Math.round(5 * (1 - t)));
-
-        for (let dx = -radius; dx <= radius; dx++) {
-            for (let dz = -radius; dz <= radius; dz++) {
-                const dist = Math.abs(dx) + Math.abs(dz);
-                const noise = hash2D(baseX + dx, baseZ + dz, yy) * 0.7;
-
-                if (dist <= radius + 1 + noise) {
-                    addMatrix(leafList, baseX + 0.5 + dx, yy, baseZ + 0.5 + dz);
-                }
-            }
-        }
-    }
-
-    addMatrix(leafList, baseX + 0.5, crownTop + 1, baseZ + 0.5);
-}
-
-function criarSuperCarvalho(x, y, z, trunkList, leafList) {
-    const baseX = x;
-    const baseZ = z;
-    const trunkHeight = 10 + Math.floor(hash2D(x, z, 3) * 5); // Altura de 10 a 15
-
-    // 1. Tronco 2x2 (Padronizado 1,1,1)
-    for (let i = 0; i <= trunkHeight; i++) {
-        addMatrix(trunkList, baseX, y + i, baseZ, 0, 0, 0, 1, 1, 1);
-        addMatrix(trunkList, baseX + 1, y + i, baseZ, 0, 0, 0, 1, 1, 1);
-        addMatrix(trunkList, baseX, y + i, baseZ + 1, 0, 0, 0, 1, 1, 1);
-        addMatrix(trunkList, baseX + 1, y + i, baseZ + 1, 0, 0, 0, 1, 1, 1);
-    }
-
-    // 2. Raízes (Base larga para dar estabilidade visual)
-    // Criamos blocos ao redor da base para parecer que a árvore "abraça" o solo
-    for (let dx = -1; dx <= 2; dx++) {
-        for (let dz = -1; dz <= 2; dz++) {
-            // Adiciona blocos nos cantos da base 4x4, ignorando o centro 2x2
-            if ((dx === -1 || dx === 2 || dz === -1 || dz === 2) && (dx + dz) % 2 === 0) {
-                 addMatrix(trunkList, baseX + dx, y, baseZ + dz, 0, 0, 0, 1, 1, 1);
-            }
-        }
-    }
-
-    // 3. Copa Densa e Irregular (Efeito "Castanheira")
-    const topY = y + trunkHeight;
-    const layers = [
-        { dy: 0, radius: 4 },
-        { dy: 1, radius: 4 },
-        { dy: 2, radius: 3 },
-        { dy: 3, radius: 2 },
-        { dy: 4, radius: 1 }
-    ];
-
-    layers.forEach(layer => {
-        const currentY = topY + layer.dy;
-        // Variação orgânica: o raio aumenta ou diminui levemente com base no ruído
-        const noise = Math.floor(hash2D(baseX, currentY, baseZ) * 3) - 1; // Resultado: -1, 0 ou 1
-        const r = layer.radius + noise; 
-
-        // Preenche o círculo de folhas
-        for (let dx = -r; dx <= r; dx++) {
-            for (let dz = -r; dz <= r; dz++) {
-                if (Math.sqrt(dx * dx + dz * dz) <= r + 0.5) {
-                    addMatrix(leafList, baseX + 0.5 + dx, currentY, baseZ + 0.5 + dz, 0, 0, 0, 1, 1, 1);
-                }
-            }
-        }
-    });
-}
-
-function criarTufoGrama(x, y, z, smallList, largeList, isLarge) {
-    const count = isLarge ? 4 : 3;
-    const heightMin = isLarge ? 1.1 : 0.55;
-    const heightMax = isLarge ? 2.0 : 1.15;
-    const width = isLarge ? 0.12 : 0.08;
-    const targetList = isLarge ? largeList : smallList;
-
-    for (let i = 0; i < count; i++) {
-        const r1 = hash2D(x, z, i + (isLarge ? 100 : 50));
-        const r2 = hash2D(x, z, i + (isLarge ? 200 : 150));
-        const r3 = hash2D(x, z, i + (isLarge ? 300 : 250));
-
-        const h = THREE.MathUtils.lerp(heightMin, heightMax, r1);
-        const rotY = r2 * Math.PI * 2;
-        const tiltX = (r3 - 0.5) * 0.25;
-        const tiltZ = (r1 - 0.5) * 0.25;
-
-        const offsetX = (r2 - 0.5) * 0.18;
-        const offsetZ = (r3 - 0.5) * 0.18;
-
-        addMatrix(
-            targetList,
-            x + offsetX,
-            y + h / 2,
-            z + offsetZ,
-            tiltX,
-            rotY,
-            tiltZ,
-            width,
-            h,
-            width * 1.1
-        );
-    }
-}
-
-function buildInstancedMesh(scene, geometry, material, matrices, castShadow, receiveShadow) {
-    if (!matrices.length) return null;
-
-    const mesh = new THREE.InstancedMesh(geometry, material, matrices.length);
-    mesh.castShadow = castShadow;
-    mesh.receiveShadow = receiveShadow;
-
-    const matrix = new THREE.Matrix4();
-    for (let i = 0; i < matrices.length; i++) {
-        matrix.copy(matrices[i]);
-        mesh.setMatrixAt(i, matrix);
-    }
-
-    mesh.instanceMatrix.needsUpdate = true;
-    scene.add(mesh);
-    return mesh;
-}
-
-export function createTerrain(scene) {
-    const boxGeometry = new THREE.BoxGeometry(1, 1, 1);
-
-    const bandMaterials = {
-        low: new THREE.MeshStandardMaterial({ color: 0x3f7f4a, roughness: 0.95, metalness: 0.0 }),
-        plain: new THREE.MeshStandardMaterial({ color: 0x4caf50, roughness: 0.9, metalness: 0.0 }),
-        hill: new THREE.MeshStandardMaterial({ color: 0x3f8f45, roughness: 0.92, metalness: 0.0 }),
-        rock: new THREE.MeshStandardMaterial({ color: 0x7b7b62, roughness: 1.0, metalness: 0.0 }),
-        snow: new THREE.MeshStandardMaterial({ color: 0xf2f2f2, roughness: 1.0, metalness: 0.0 })
+    return {
+        x,
+        z,
+        height: rawHeight,
+        weights,
+        moisture: moistureValue,
+        temperature: temperatureValue
     };
+}
 
-    const trunkMaterial = new THREE.MeshStandardMaterial({
-        color: 0x8b5a2b,
-        roughness: 1.0,
-        metalness: 0.0
-    });
+function createTerrainSampleCache(limit) {
+    const samples = new Map();
 
-    const leafMaterial = new THREE.MeshStandardMaterial({
-        color: 0x2f7d32,
-        roughness: 1.0,
-        metalness: 0.0
-    });
+    return {
+        get(key) {
+            const sample = samples.get(key);
+            if (!sample) return null;
 
-    const pineLeafMaterial = new THREE.MeshStandardMaterial({
-        color: 0x245f2a,
-        roughness: 1.0,
-        metalness: 0.0
-    });
+            samples.delete(key);
+            samples.set(key, sample);
+            return sample;
+        },
+        set(key, sample) {
+            samples.set(key, sample);
+            if (samples.size > limit) {
+                const oldestKey = samples.keys().next().value;
+                samples.delete(oldestKey);
+            }
+        },
+        clear() {
+            samples.clear();
+        }
+    };
+}
 
-    const grassSmallMaterial = new THREE.MeshStandardMaterial({
-        color: 0x59b35a,
-        roughness: 1.0,
-        metalness: 0.0,
-        emissive: 0x143014,
-        emissiveIntensity: 0.12
-    });
+function createChunkSampler(sharedSampleCache, sampleGrid = null) {
+    const samples = new Map();
 
-    const grassLargeMaterial = new THREE.MeshStandardMaterial({
-        color: 0x3f9f49,
-        roughness: 1.0,
-        metalness: 0.0,
-        emissive: 0x102510,
-        emissiveIntensity: 0.14
-    });
+    return function sampleTerrain(x, z) {
+        const gridSample = sampleGrid?.getSample(x, z);
+        if (gridSample) return gridSample;
+
+        const key = `${x},${z}`;
+        let sample = samples.get(key);
+        if (!sample) {
+            sample = sharedSampleCache.get(key);
+        }
+        if (!sample) {
+            sample = createTerrainSample(x, z);
+            sharedSampleCache.set(key, sample);
+        }
+        if (!samples.has(key)) {
+            samples.set(key, sample);
+        }
+        return sample;
+    };
+}
+
+    // micro variação para o chão não parecer pintado de cor única
+    // leve dessaturação acima de 22
+function getTerrainHeightFormula(x, z) {
+    return createTerrainSample(x, z).height;
+}
+
+function createHeightCache() {
+    const heights = new Map();
+
+    return function getCachedHeight(x, z) {
+        const key = `${x},${z}`;
+        const cachedHeight = heights.get(key);
+        if (cachedHeight !== undefined) {
+            heights.delete(key);
+            heights.set(key, cachedHeight);
+            return cachedHeight;
+        }
+
+        const height = getTerrainHeightFormula(x, z);
+        heights.set(key, height);
+
+        if (heights.size > HEIGHT_CACHE_LIMIT) {
+            const oldestKey = heights.keys().next().value;
+            heights.delete(oldestKey);
+        }
+
+        return height;
+    };
+}
+
+export function createTerrain(scene, diagnostics) {
+    const terrainMaterial = createTerrainMaterial();
 
     const chunks = new Map();
-    const loadedKeys = new Set();
-    const heightMap = new Map();
+    const sharedSampleCache = createTerrainSampleCache(TERRAIN_SAMPLE_CACHE_LIMIT);
+    const getCachedHeight = createHeightCache();
+    let neededChunkKeys = new Set();
+    let chunkLoadQueue = [];
+    const queuedChunkKeys = new Set();
+    let lastPlayerChunkX = null;
+    let lastPlayerChunkZ = null;
+    let didInitialChunkBurst = false;
 
-    function chooseBand(y) {
-        if (y <= -6) return 'low';
-        if (y <= 4) return 'plain';
-        if (y <= 14) return 'hill';
-        if (y <= 30) return 'rock';
-        return 'snow';
+    function getChunkDistance(cx, cz, playerChunkX = lastPlayerChunkX, playerChunkZ = lastPlayerChunkZ) {
+        if (playerChunkX === null || playerChunkZ === null) return 0;
+        return Math.max(Math.abs(cx - playerChunkX), Math.abs(cz - playerChunkZ));
     }
 
-    function getChunkKey(cx, cz) {
-        return `${cx},${cz}`;
+    function isChunkVisible(cx, cz, playerChunkX = lastPlayerChunkX, playerChunkZ = lastPlayerChunkZ) {
+        return getChunkDistance(cx, cz, playerChunkX, playerChunkZ) <= VIEW_DISTANCE;
     }
 
-    function getChunkBounds(cx, cz) {
-        const startX = Math.max(WORLD_MIN, cx * CHUNK_SIZE);
-        const startZ = Math.max(WORLD_MIN, cz * CHUNK_SIZE);
-        const endX = Math.min(WORLD_MAX, startX + CHUNK_SIZE - 1);
-        const endZ = Math.min(WORLD_MAX, startZ + CHUNK_SIZE - 1);
-        return { startX, startZ, endX, endZ };
+    function enqueueChunk(cx, cz, playerChunkX, playerChunkZ) {
+        const key = getChunkKey(cx, cz);
+        if (chunks.has(key) || queuedChunkKeys.has(key)) return;
+
+        const visibleDistance = Math.max(Math.abs(cx - playerChunkX), Math.abs(cz - playerChunkZ));
+        chunkLoadQueue.push({
+            cx,
+            cz,
+            key,
+            priority: visibleDistance > VIEW_DISTANCE
+                ? visibleDistance + VIEW_DISTANCE
+                : visibleDistance
+        });
+        queuedChunkKeys.add(key);
+    }
+
+    function refreshChunkQueue(playerChunkX, playerChunkZ) {
+        neededChunkKeys = new Set();
+
+        for (let dx = -PREFETCH_DISTANCE; dx <= PREFETCH_DISTANCE; dx++) {
+            for (let dz = -PREFETCH_DISTANCE; dz <= PREFETCH_DISTANCE; dz++) {
+                const cx = playerChunkX + dx;
+                const cz = playerChunkZ + dz;
+
+                const { startX, startZ, endX, endZ } = getChunkBounds(cx, cz, CHUNK_SIZE, WORLD_MIN, WORLD_MAX);
+                if (startX >= endX || startZ >= endZ) continue;
+
+                const key = getChunkKey(cx, cz);
+                neededChunkKeys.add(key);
+                enqueueChunk(cx, cz, playerChunkX, playerChunkZ);
+            }
+        }
+
+        for (const key of [...chunks.keys()]) {
+            if (!neededChunkKeys.has(key)) {
+                unloadChunk(key);
+            }
+        }
+
+        chunkLoadQueue = chunkLoadQueue.filter((item) => neededChunkKeys.has(item.key) && !chunks.has(item.key));
+        queuedChunkKeys.clear();
+        for (const item of chunkLoadQueue) {
+            const visibleDistance = Math.max(Math.abs(item.cx - playerChunkX), Math.abs(item.cz - playerChunkZ));
+            item.priority = visibleDistance > VIEW_DISTANCE
+                ? visibleDistance + VIEW_DISTANCE
+                : visibleDistance;
+            queuedChunkKeys.add(item.key);
+        }
+        chunkLoadQueue.sort((a, b) => a.priority - b.priority);
+
+        for (const chunk of chunks.values()) {
+            chunk.group.visible = isChunkVisible(chunk.cx, chunk.cz, playerChunkX, playerChunkZ);
+        }
+    }
+
+    function processChunkQueue(maxChunks) {
+        let created = 0;
+        while (created < maxChunks && chunkLoadQueue.length > 0) {
+            const next = chunkLoadQueue.shift();
+            queuedChunkKeys.delete(next.key);
+
+            if (!neededChunkKeys.has(next.key) || chunks.has(next.key)) continue;
+            if (diagnostics.measure('createChunk', () => createChunk(next.cx, next.cz))) {
+                created++;
+            }
+        }
     }
 
     function createChunk(cx, cz) {
         const key = getChunkKey(cx, cz);
         if (chunks.has(key)) return chunks.get(key);
 
-        const { startX, startZ, endX, endZ } = getChunkBounds(cx, cz);
-        if (startX > endX || startZ > endZ) return null;
+        const { startX, startZ, endX, endZ } = getChunkBounds(cx, cz, CHUNK_SIZE, WORLD_MIN, WORLD_MAX);
+        if (startX >= endX || startZ >= endZ) return null;
 
-        const bands = {
-            low: [],
-            plain: [],
-            hill: [],
-            rock: [],
-            snow: []
+        const baseSampleTerrain = createChunkSampler(sharedSampleCache);
+        const heightMap = diagnostics.measure(
+            'chunkSampleGrid',
+            () => createChunkSampleGrid(startX, startZ, endX, endZ, TERRAIN_STEP, baseSampleTerrain)
+        );
+        const sampleTerrain = createChunkSampler(sharedSampleCache, heightMap);
+
+        const { geometry, width, depth } = diagnostics.measure(
+            'terrainGeometry',
+            () => createChunkTerrainGeometry(startX, startZ, endX, endZ, heightMap, sampleTerrain, TERRAIN_STEP)
+        );
+        const terrainMesh = new THREE.Mesh(geometry, terrainMaterial);
+        terrainMesh.position.set(startX + width / 2, 0, startZ + depth / 2);
+
+        const chunkGroup = buildChunkGroup(terrainMesh);
+        chunkGroup.visible = isChunkVisible(cx, cz);
+
+        const chunk = {
+            key,
+            cx,
+            cz,
+            group: chunkGroup,
+            sampleGrid: heightMap
         };
-
-        const oakTrunks = [];
-        const oakLeaves = [];
-        const pineTrunks = [];
-        const pineLeaves = [];
-        const grassSmall = [];
-        const grassLarge = [];
-        const superOakTrunks = []; // Adicione isso
-        const superOakLeaves = []; // Adicione isso
-
-        for (let x = startX; x <= endX; x += TERRAIN_STEP) {
-            for (let z = startZ; z <= endZ; z += TERRAIN_STEP) {
-                const y = getTerrainHeightFormula(x, z);
-                heightMap.set(`${x},${z}`, y);
-
-                const band = chooseBand(y);
-                const matrix = new THREE.Matrix4();
-                matrix.setPosition(x, y, z);
-                bands[band].push(matrix);
-            }
-        }
-
-        for (let x = startX; x <= endX; x += TREE_SCAN_STEP) {
-            for (let z = startZ; z <= endZ; z += TREE_SCAN_STEP) {
-                const y = heightMap.get(`${x},${z}`);
-                if (y === undefined) continue;
-
-                const slope = getSlopeFromHeightMap(heightMap, x, z);
-                if (slope > 2) continue;
-
-                const rOak = hash2D(x, z, 10);
-                const rPine = hash2D(x, z, 20);
-                const rSuperOak = hash2D(x, z, 30); // Nova semente
-
-                const suitableForOak = y >= OAK_MIN_HEIGHT && y <= OAK_MAX_HEIGHT;
-                const suitableForPine = y >= PINE_MIN_HEIGHT && y <= PINE_MAX_HEIGHT;
-
-                if (suitableForOak && rSuperOak < SUPER_OAK_CHANCE) {
-                    criarSuperCarvalho(x, y, z, superOakTrunks, superOakLeaves);
-                } else if (suitableForOak && rOak < OAK_CHANCE) {
-                    criarCarvalho(x, y, z, oakTrunks, oakLeaves);
-                } else if (suitableForPine && rPine < PINE_CHANCE) {
-                    criarPinheiroGigante(x, y, z, pineTrunks, pineLeaves);
-}
-            }
-        }
-
-        for (let x = startX; x <= endX; x += GRASS_SCAN_STEP) {
-            for (let z = startZ; z <= endZ; z += GRASS_SCAN_STEP) {
-                const y = heightMap.get(`${x},${z}`);
-                if (y === undefined) continue;
-
-                const slope = getSlopeFromHeightMap(heightMap, x, z);
-                if (slope > 1.5) continue;
-
-                const r = hash2D(x, z, 77);
-                const r2 = hash2D(x, z, 88);
-
-                if (y > -2 && y < 26) {
-                    if (r < GRASS_SMALL_CHANCE) {
-                        criarTufoGrama(x, y + 0.01, z, grassSmall, grassLarge, false);
-                    } else if (r2 < GRASS_LARGE_CHANCE) {
-                        criarTufoGrama(x, y + 0.01, z, grassSmall, grassLarge, true);
-                    }
-                }
-            }
-        }
-
-        const chunkGroup = new THREE.Group();
-
-        buildInstancedMesh(chunkGroup, boxGeometry, bandMaterials.low, bands.low, true, true);
-        buildInstancedMesh(chunkGroup, boxGeometry, bandMaterials.plain, bands.plain, true, true);
-        buildInstancedMesh(chunkGroup, boxGeometry, bandMaterials.hill, bands.hill, true, true);
-        buildInstancedMesh(chunkGroup, boxGeometry, bandMaterials.rock, bands.rock, true, true);
-        buildInstancedMesh(chunkGroup, boxGeometry, bandMaterials.snow, bands.snow, true, true);
-
-        buildInstancedMesh(chunkGroup, boxGeometry, trunkMaterial, oakTrunks, true, true);
-        buildInstancedMesh(chunkGroup, boxGeometry, leafMaterial, oakLeaves, true, true);
-        buildInstancedMesh(chunkGroup, boxGeometry, trunkMaterial, pineTrunks, true, true);
-        buildInstancedMesh(chunkGroup, boxGeometry, pineLeafMaterial, pineLeaves, true, true);
-        buildInstancedMesh(chunkGroup, boxGeometry, grassSmallMaterial, grassSmall, false, false);
-        buildInstancedMesh(chunkGroup, boxGeometry, grassLargeMaterial, grassLarge, false, false);
-
-        buildInstancedMesh(chunkGroup, boxGeometry, trunkMaterial, superOakTrunks, true, true);
-        buildInstancedMesh(chunkGroup, boxGeometry, leafMaterial, superOakLeaves, true, true);
-
         scene.add(chunkGroup);
-
-        const chunk = { key, group: chunkGroup };
         chunks.set(key, chunk);
+        diagnostics.setCounter('loadedChunks', chunks.size);
         return chunk;
     }
 
@@ -408,48 +256,48 @@ export function createTerrain(scene) {
         const chunk = chunks.get(key);
         if (!chunk) return;
 
+        chunk.group.userData.disposed = true;
         scene.remove(chunk.group);
+        chunk.group.traverse((object) => {
+            if (object.geometry) object.geometry.dispose();
+        });
+        chunk.group.clear();
         chunks.delete(key);
+        diagnostics.setCounter('loadedChunks', chunks.size);
+    }
+
+    function dispose() {
+        for (const key of [...chunks.keys()]) {
+            unloadChunk(key);
+        }
+        sharedSampleCache.clear();
+        terrainMaterial.dispose();
     }
 
     function updateChunks(playerX, playerZ) {
         const playerChunkX = Math.floor(playerX / CHUNK_SIZE);
         const playerChunkZ = Math.floor(playerZ / CHUNK_SIZE);
 
-        const needed = new Set();
-
-        for (let dx = -VIEW_DISTANCE; dx <= VIEW_DISTANCE; dx++) {
-            for (let dz = -VIEW_DISTANCE; dz <= VIEW_DISTANCE; dz++) {
-                const cx = playerChunkX + dx;
-                const cz = playerChunkZ + dz;
-
-                const { startX, startZ, endX, endZ } = getChunkBounds(cx, cz);
-                if (startX > endX || startZ > endZ) continue;
-
-                const key = getChunkKey(cx, cz);
-                needed.add(key);
-
-                if (!chunks.has(key)) {
-                    createChunk(cx, cz);
-                }
-            }
+        if (playerChunkX !== lastPlayerChunkX || playerChunkZ !== lastPlayerChunkZ) {
+            lastPlayerChunkX = playerChunkX;
+            lastPlayerChunkZ = playerChunkZ;
+            refreshChunkQueue(playerChunkX, playerChunkZ);
         }
 
-        for (const key of chunks.keys()) {
-            if (!needed.has(key)) {
-                unloadChunk(key);
-            }
-        }
+        processChunkQueue(didInitialChunkBurst ? CHUNKS_PER_FRAME : INITIAL_CHUNK_BURST);
+        didInitialChunkBurst = true;
     }
 
     function getHeight(posX, posZ) {
-        const x = Math.round(posX);
-        const z = Math.round(posZ);
-        return getTerrainHeightFormula(x, z);
+        const chunkX = Math.floor(posX / CHUNK_SIZE);
+        const chunkZ = Math.floor(posZ / CHUNK_SIZE);
+        const chunk = chunks.get(getChunkKey(chunkX, chunkZ));
+        const loadedHeight = chunk?.sampleGrid.sampleHeightBilinear(posX, posZ);
+        if (loadedHeight !== undefined) return loadedHeight;
+        return getCachedHeight(posX, posZ);
     }
 
-    // carrega o pedaço inicial ao redor da origem
     updateChunks(0, 0);
 
-    return { getHeight, updateChunks };
+    return { getHeight, updateChunks, dispose };
 }

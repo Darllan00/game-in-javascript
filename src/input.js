@@ -14,7 +14,10 @@ export function setupControls(camera) {
 
     const menu = document.getElementById('menu');
 
-    menu.addEventListener('click', () => controls.lock());
+    menu.addEventListener('click', (event) => {
+        if (event.target instanceof Element && event.target.closest('[data-menu-control], button, input, textarea, select')) return;
+        controls.lock();
+    });
 
     controls.addEventListener('lock', () => {
         menu.style.display = 'none';

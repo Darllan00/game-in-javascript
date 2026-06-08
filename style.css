@@ -17,6 +17,21 @@ body {
     z-index: 10;
 }
 
+#fps-counter {
+    position: absolute;
+    top: 12px;
+    right: 14px;
+    min-width: 58px;
+    padding: 5px 8px;
+    border-radius: 4px;
+    background: rgba(0, 0, 0, 0.36);
+    color: rgba(255, 255, 255, 0.86);
+    font: 12px/1.2 Arial, sans-serif;
+    text-align: right;
+    pointer-events: none;
+    z-index: 12;
+}
+
 #menu {
     position: absolute;
     top: 0;
@@ -31,4 +46,40 @@ body {
     align-items: center;
     z-index: 20;
     cursor: pointer;
+}
+
+#seed-controls {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    margin: 12px 0 18px;
+    cursor: default;
+}
+
+.seed-label {
+    max-width: min(86vw, 520px);
+    color: rgba(255, 255, 255, 0.82);
+    font-size: 0.95rem;
+    overflow-wrap: anywhere;
+}
+
+.seed-actions {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    justify-content: center;
+}
+
+.seed-actions button {
+    border: 1px solid rgba(255, 255, 255, 0.35);
+    background: rgba(255, 255, 255, 0.12);
+    color: white;
+    padding: 8px 12px;
+    font: inherit;
+    cursor: pointer;
+}
+
+.seed-actions button:hover {
+    background: rgba(255, 255, 255, 0.2);
 }
