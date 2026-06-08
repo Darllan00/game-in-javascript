@@ -2,8 +2,8 @@ import * as THREE from 'three';
 import { CONFIG } from './config.js';
 
 const FULL_TURN = Math.PI * 2;
-const SUN_SIZE = 34;
-const MOON_SIZE = 24;
+const SUN_SIZE = 340;
+const MOON_SIZE = 240;
 
 const tempColor = new THREE.Color();
 const tempColorB = new THREE.Color();
