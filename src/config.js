@@ -18,9 +18,9 @@ export const CONFIG = {
         nivelDoMar: 0
     },
     movimento: {
-        velocidade: 30,
+        velocidade: 12,
         gravidade: 30,
-        pulo: 20,
+        pulo: 15,
         alturaMaximaPasso: 1.35
     },
     renderizacao: {
@@ -55,8 +55,13 @@ export const CONFIG = {
     },
     grama: {
         ativa: true,
-        distanciaChunks: 3,
-        tufosPorChunk: 1500,
+        ventoApenasParado: true,
+        atualizarEnquantoMovendo: true,
+        intervaloAtualizacaoMovendoMs: 800,
+        distanciaMovendoChunks: 2,
+        tilesMovendoPorAtualizacao: 1,
+        distanciaChunks: 2,
+        tufosPorChunk: 1000,
         tilesPorFrame: 1,
         segmentos: 3,
         alturaMin: 0.95,
@@ -64,15 +69,26 @@ export const CONFIG = {
         larguraMin: 0.075,
         larguraMax: 0.75,
         alturaMaximaTerreno: 36,
+        intermediaria: {
+            ativa: true,
+            distanciaChunks: 4,
+            tufosPorChunk: 360,
+            tilesPorFrame: 1,
+            segmentos: 1,
+            alturaMin: 0.8,
+            alturaMax: 1.35,
+            larguraMin: 0.12,
+            larguraMax: 0.95
+        },
         distante: {
             ativa: true,
             modo: 'points',
-            distanciaChunks: 12,
-            tufosPorChunk: 80,
+            distanciaChunks: 20,
+            tufosPorChunk: 100,
             tilesPorFrame: 1,
             segmentos: 1, 
-            alturaMin: 2.0,
-            alturaMax: 2.0,
+            alturaMin: 1.5,
+            alturaMax: 1.5,
             larguraMin: 0.8,
             larguraMax: 6.0
         }

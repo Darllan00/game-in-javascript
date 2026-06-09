@@ -75,11 +75,14 @@ function loop() {
     const delta = clock.getDelta();
     updateFpsCounter(delta);
     dayNightCycle.update(delta);
-    grass.update(delta, player.position.x, player.position.z);
 
     if (controls.isLocked) {
+        const isPlayerMoving = keys.w || keys.a || keys.s || keys.d;
         updatePhysics(delta, controls, player, keys, state, getHeight);
         updateChunks(player.position.x, player.position.z);
+        grass.update(delta, player.position.x, player.position.z, isPlayerMoving);
+    } else {
+        grass.update(delta, player.position.x, player.position.z, false);
     }
 
     renderer.render(scene, camera);
