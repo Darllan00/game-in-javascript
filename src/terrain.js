@@ -757,19 +757,22 @@ export function createTerrain(scene, diagnostics) {
         terrainMaterial.dispose();
     }
 
-    function updateChunks(playerX, playerZ) {
+    function updateChunks(playerX, playerZ, isPlayerMoving = false) {
         const now = performance.now();
         const previousFrameMs = now - lastChunkUpdateTime;
         lastChunkUpdateTime = now;
 
         const playerChunkX = Math.floor(playerX / CHUNK_SIZE);
         const playerChunkZ = Math.floor(playerZ / CHUNK_SIZE);
+        const didChangeChunk = playerChunkX !== lastPlayerChunkX || playerChunkZ !== lastPlayerChunkZ;
 
-        if (playerChunkX !== lastPlayerChunkX || playerChunkZ !== lastPlayerChunkZ) {
+        if (didChangeChunk) {
             lastPlayerChunkX = playerChunkX;
             lastPlayerChunkZ = playerChunkZ;
             refreshChunkQueue(playerChunkX, playerChunkZ);
         }
+
+        if (isPlayerMoving && !didChangeChunk) return;
 
         if (didInitialChunkBurst) {
             if (previousFrameMs > SLOW_FRAME_GENERATION_PAUSE_MS) return;
