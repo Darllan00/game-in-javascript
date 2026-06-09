@@ -386,6 +386,24 @@ function getGrassTileKey(type, cx, cz) {
     return `${type}:${getChunkKey(cx, cz)}`;
 }
 
+function getGrassTileCoordKey(cx, cz) {
+    return getChunkKey(cx, cz);
+}
+
+function getGrassTileCoords(key) {
+    const coords = key.slice(key.indexOf(':') + 1).split(',');
+    return {
+        cx: Number(coords[0]),
+        cz: Number(coords[1])
+    };
+}
+
+function getGrassQueueOrder(type) {
+    if (type === 'near') return 0;
+    if (type === 'mid') return 1;
+    return 2;
+}
+
 export function createGrass(scene, getHeight, getTerrainSample, diagnostics) {
     const grassConfig = CONFIG.grama;
     const profiles = createGrassProfiles();
@@ -396,7 +414,11 @@ export function createGrass(scene, getHeight, getTerrainSample, diagnostics) {
     let lastPlayerChunkZ = null;
     let lastRefreshChunkX = null;
     let lastRefreshChunkZ = null;
+    let currentRefreshDistance = 0;
     let movingRefreshTimer = 0;
+    let stoppedTimer = 0;
+    let stoppedRefreshTimer = 0;
+    let stoppedQueueTimer = 0;
     let isUsingMovingRange = false;
     let elapsed = 0;
 
@@ -413,6 +435,26 @@ export function createGrass(scene, getHeight, getTerrainSample, diagnostics) {
         ? createFarGrassMaterial()
         : createGrassMaterial({ animated: false });
 
+    function removeActiveTile(key) {
+        const tile = activeTiles.get(key);
+        if (!tile) return false;
+
+        scene.remove(tile);
+        disposeTile(tile);
+        activeTiles.delete(key);
+        return true;
+    }
+
+    function removeOtherActiveTileLods(type, cx, cz) {
+        const desiredKey = getGrassTileKey(type, cx, cz);
+        const coordKey = getGrassTileCoordKey(cx, cz);
+        for (const [key] of [...activeTiles]) {
+            if (key === desiredKey) continue;
+            if (key.slice(key.indexOf(':') + 1) !== coordKey) continue;
+            removeActiveTile(key);
+        }
+    }
+
     function queueTile(type, cx, cz, playerChunkX, playerChunkZ) {
         if (!isInsideWorld(cx, cz)) return;
 
@@ -424,8 +466,55 @@ export function createGrass(scene, getHeight, getTerrainSample, diagnostics) {
         queuedTileKeys.add(key);
     }
 
-    function refreshTiles(playerChunkX, playerChunkZ, maxDistanceOverride = null) {
+    function getTileTypeForDistance(distance, nearDistance, midDistance, midConfig, farConfig) {
+        if (distance <= nearDistance) return 'near';
+        if (distance <= midDistance && midConfig.ativa) return 'mid';
+        return farConfig.ativa ? 'far' : null;
+    }
+
+    function prioritizeTileQueue(playerChunkX, playerChunkZ, maxDistance) {
+        const nearDistance = grassConfig.distanciaChunks;
+        const midConfig = grassConfig.intermediaria;
+        const midDistance = midConfig.ativa
+            ? Math.max(midConfig.distanciaChunks, nearDistance)
+            : nearDistance;
+        const farConfig = grassConfig.distante;
+        const nextQueue = [];
+        const nextQueuedKeys = new Set();
+
+        for (const item of tileBuildQueue) {
+            const distance = Math.max(Math.abs(item.cx - playerChunkX), Math.abs(item.cz - playerChunkZ));
+            if (distance > maxDistance) continue;
+
+            const type = getTileTypeForDistance(distance, nearDistance, midDistance, midConfig, farConfig);
+            if (!type) continue;
+
+            const key = getGrassTileKey(type, item.cx, item.cz);
+            if (activeTiles.has(key) || nextQueuedKeys.has(key)) continue;
+
+            nextQueue.push({
+                ...item,
+                key,
+                type,
+                priority: distance
+            });
+            nextQueuedKeys.add(key);
+        }
+
+        tileBuildQueue = nextQueue.sort((a, b) => {
+            const typeOrder = getGrassQueueOrder(a.type) - getGrassQueueOrder(b.type);
+            return typeOrder || a.priority - b.priority;
+        });
+
+        queuedTileKeys.clear();
+        for (const item of tileBuildQueue) {
+            queuedTileKeys.add(item.key);
+        }
+    }
+
+    function refreshTiles(playerChunkX, playerChunkZ, maxDistanceOverride = null, minDistanceOverride = 0) {
         const desiredKeys = new Set();
+        const desiredCoordKeys = new Set();
         const nearDistance = grassConfig.distanciaChunks;
         const midConfig = grassConfig.intermediaria;
         const midDistance = midConfig.ativa
@@ -445,75 +534,74 @@ export function createGrass(scene, getHeight, getTerrainSample, diagnostics) {
                 const cx = playerChunkX + dx;
                 const cz = playerChunkZ + dz;
                 const distance = Math.max(Math.abs(dx), Math.abs(dz));
-                let type = 'far';
-                if (distance <= nearDistance) {
-                    type = 'near';
-                } else if (distance <= midDistance) {
-                    type = 'mid';
-                }
-                if (type === 'mid' && !midConfig.ativa) continue;
-                if (type === 'far' && !farConfig.ativa) continue;
+                if (distance < minDistanceOverride) continue;
+
+                const type = getTileTypeForDistance(distance, nearDistance, midDistance, midConfig, farConfig);
+                if (!type) continue;
+
                 const key = getGrassTileKey(type, cx, cz);
                 desiredKeys.add(key);
+                desiredCoordKeys.add(getGrassTileCoordKey(cx, cz));
                 queueTile(type, cx, cz, playerChunkX, playerChunkZ);
             }
         }
 
         if (maxDistanceOverride === null) {
-            for (const [key, tile] of activeTiles) {
-                if (desiredKeys.has(key)) continue;
-                scene.remove(tile);
-                disposeTile(tile);
-                activeTiles.delete(key);
+            for (const [key] of activeTiles) {
+                const { cx, cz } = getGrassTileCoords(key);
+                if (desiredCoordKeys.has(getGrassTileCoordKey(cx, cz))) continue;
+                removeActiveTile(key);
             }
         }
 
-        tileBuildQueue = tileBuildQueue
-            .filter((item) => desiredKeys.has(item.key) && !activeTiles.has(item.key))
-            .sort((a, b) => a.priority - b.priority);
-        queuedTileKeys.clear();
-        for (const item of tileBuildQueue) {
-            queuedTileKeys.add(item.key);
+        if (minDistanceOverride === 0) {
+            tileBuildQueue = tileBuildQueue.filter((item) => desiredKeys.has(item.key));
         }
+        prioritizeTileQueue(playerChunkX, playerChunkZ, desiredDistance);
 
         diagnostics?.setCounter('grassTiles', activeTiles.size);
         diagnostics?.setCounter('grassQueue', tileBuildQueue.length);
+        diagnostics?.setCounter('grassRefreshDistance', desiredDistance);
+    }
+
+    function getFullRefreshDistance() {
+        return Math.max(
+            grassConfig.distanciaChunks,
+            grassConfig.intermediaria?.ativa ? grassConfig.intermediaria.distanciaChunks : 0,
+            grassConfig.distante?.ativa ? grassConfig.distante.distanciaChunks : 0
+        );
+    }
+
+    function pruneTilesOutsideDistance(playerChunkX, playerChunkZ, maxDistance) {
+        let removed = 0;
+        const maxRemovals = grassConfig.tilesRemovidosPorFrame ?? 16;
+        for (const [key] of activeTiles) {
+            if (removed >= maxRemovals) break;
+
+            const { cx, cz } = getGrassTileCoords(key);
+            const distance = Math.max(Math.abs(cx - playerChunkX), Math.abs(cz - playerChunkZ));
+            if (distance <= maxDistance) continue;
+
+            removeActiveTile(key);
+            removed++;
+        }
     }
 
     function processTileQueue(maxBuildsOverride = null) {
         const useMovingBudget = maxBuildsOverride !== null;
-        let nearBuilt = 0;
-        let midBuilt = 0;
-        let farBuilt = 0;
         let totalBuilt = 0;
         const midConfig = grassConfig.intermediaria;
         const farConfig = grassConfig.distante;
-        let index = 0;
 
-        while (index < tileBuildQueue.length) {
-            if (maxBuildsOverride !== null && totalBuilt >= maxBuildsOverride) break;
+        function buildNextTileOfType(type) {
+            const index = tileBuildQueue.findIndex((item) => item.type === type);
+            if (index === -1) return false;
+            return tileBuildQueue.splice(index, 1)[0];
+        }
 
-            const item = tileBuildQueue[index];
-            if (useMovingBudget && item.type === 'far') {
-                index++;
-                continue;
-            }
-            if (item.type === 'near' && nearBuilt >= grassConfig.tilesPorFrame) {
-                index++;
-                continue;
-            }
-            if (item.type === 'mid' && midBuilt >= midConfig.tilesPorFrame) {
-                index++;
-                continue;
-            }
-            if (item.type === 'far' && farBuilt >= farConfig.tilesPorFrame) {
-                index++;
-                continue;
-            }
-
-            tileBuildQueue.splice(index, 1);
+        function createQueuedTile(item) {
             queuedTileKeys.delete(item.key);
-            if (activeTiles.has(item.key)) continue;
+            if (activeTiles.has(item.key)) return false;
 
             const profile = profiles[item.type];
             const material = item.type === 'near'
@@ -522,19 +610,35 @@ export function createGrass(scene, getHeight, getTerrainSample, diagnostics) {
                     ? midMaterial
                     : farMaterial;
             const tile = createGrassTile(item.cx, item.cz, material, getHeight, getTerrainSample, profile);
-            if (!tile) continue;
+            if (!tile) return false;
 
             scene.add(tile);
             activeTiles.set(item.key, tile);
+            removeOtherActiveTileLods(item.type, item.cx, item.cz);
+            return true;
+        }
 
-            if (item.type === 'near') {
-                nearBuilt++;
-            } else if (item.type === 'mid') {
-                midBuilt++;
-            } else {
-                farBuilt++;
+        function processType(type, budget) {
+            let built = 0;
+            let attempts = 0;
+            const maxAttempts = Math.max(4, budget * 4);
+            while (built < budget && attempts < maxAttempts) {
+                if (maxBuildsOverride !== null && totalBuilt >= maxBuildsOverride) break;
+
+                const item = buildNextTileOfType(type);
+                if (!item) break;
+                attempts++;
+                if (!createQueuedTile(item)) continue;
+
+                built++;
+                totalBuilt++;
             }
-            totalBuilt++;
+        }
+
+        processType('near', grassConfig.tilesPorFrame);
+        processType('mid', midConfig.tilesPorFrame);
+        if (!useMovingBudget) {
+            processType('far', farConfig.tilesPorFrame);
         }
 
         diagnostics?.setCounter('grassTiles', activeTiles.size);
@@ -572,6 +676,9 @@ export function createGrass(scene, getHeight, getTerrainSample, diagnostics) {
         }
 
         if (isPlayerMoving) {
+            stoppedTimer = 0;
+            stoppedRefreshTimer = 0;
+            stoppedQueueTimer = 0;
             movingRefreshTimer += deltaSeconds * 1000;
             const shouldRefreshMoving = playerChunkX !== lastPlayerChunkX
                 || playerChunkZ !== lastPlayerChunkZ
@@ -582,6 +689,7 @@ export function createGrass(scene, getHeight, getTerrainSample, diagnostics) {
                 lastPlayerChunkX = playerChunkX;
                 lastPlayerChunkZ = playerChunkZ;
                 const movingDistance = Math.min(grassConfig.distanciaMovendoChunks, CONFIG.grama.intermediaria?.distanciaChunks ?? grassConfig.distanciaChunks);
+                currentRefreshDistance = Math.max(currentRefreshDistance, movingDistance);
                 refreshTiles(playerChunkX, playerChunkZ, movingDistance);
             }
 
@@ -590,6 +698,9 @@ export function createGrass(scene, getHeight, getTerrainSample, diagnostics) {
             return;
         }
 
+        stoppedTimer += deltaSeconds * 1000;
+        stoppedRefreshTimer += deltaSeconds * 1000;
+        stoppedQueueTimer += deltaSeconds * 1000;
         movingRefreshTimer = grassConfig.intervaloAtualizacaoMovendoMs;
         diagnostics?.setCounter('grassPaused', 0);
 
@@ -600,11 +711,41 @@ export function createGrass(scene, getHeight, getTerrainSample, diagnostics) {
             || playerChunkX !== lastRefreshChunkX
             || playerChunkZ !== lastRefreshChunkZ
         ) {
+            if (playerChunkX !== lastRefreshChunkX || playerChunkZ !== lastRefreshChunkZ) {
+                currentRefreshDistance = Math.min(currentRefreshDistance, grassConfig.distanciaMovendoChunks);
+            }
             lastPlayerChunkX = playerChunkX;
             lastPlayerChunkZ = playerChunkZ;
             lastRefreshChunkX = playerChunkX;
             lastRefreshChunkZ = playerChunkZ;
-            refreshTiles(playerChunkX, playerChunkZ);
+        }
+
+        const fullRefreshDistance = getFullRefreshDistance();
+        const canExpandStopped = stoppedTimer >= (grassConfig.recuperacaoAposMovimentoMs ?? 0)
+            && stoppedRefreshTimer >= (grassConfig.intervaloAtualizacaoParadoMs ?? 0);
+        if ((currentRefreshDistance < fullRefreshDistance || isUsingMovingRange) && canExpandStopped) {
+            stoppedRefreshTimer = 0;
+            const distanceStep = Math.max(1, grassConfig.chunksPorAtualizacaoParado ?? 1);
+            const previousRefreshDistance = currentRefreshDistance;
+            const minRefreshDistance = previousRefreshDistance > 0 ? previousRefreshDistance + 1 : 0;
+            currentRefreshDistance = Math.min(fullRefreshDistance, currentRefreshDistance + distanceStep);
+            refreshTiles(playerChunkX, playerChunkZ, currentRefreshDistance, minRefreshDistance);
+            if (currentRefreshDistance >= fullRefreshDistance) {
+                isUsingMovingRange = false;
+            }
+        }
+
+        const stoppedUpdateInterval = grassConfig.intervaloAtualizacaoParadoMs ?? 0;
+        const canProcessStoppedQueue = stoppedQueueTimer >= stoppedUpdateInterval;
+        if (!canProcessStoppedQueue) return;
+
+        stoppedQueueTimer = 0;
+        pruneTilesOutsideDistance(playerChunkX, playerChunkZ, fullRefreshDistance);
+
+        const isRecoveringAfterMovement = stoppedTimer < (grassConfig.recuperacaoAposMovimentoMs ?? 0);
+        if (isRecoveringAfterMovement) {
+            processTileQueue(grassConfig.tilesRecuperacaoParadoPorAtualizacao ?? grassConfig.tilesMovendoPorAtualizacao);
+            return;
         }
 
         processTileQueue();
