@@ -789,7 +789,11 @@ export function createTerrain(scene, diagnostics) {
         return getCachedHeight(posX, posZ);
     }
 
+    function getSample(posX, posZ) {
+        return createTerrainSample(posX, posZ);
+    }
+
     updateChunks(0, 0);
 
-    return { getHeight, updateChunks, dispose };
+    return { getHeight, getSample, updateChunks, dispose };
 }

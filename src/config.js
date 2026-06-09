@@ -5,7 +5,7 @@ export const CONFIG = {
         tamanhoGrade: 50000,
         alturaOlhos: 2,
         tamanhoChunk: 32,
-        distanciaChunks: 400,
+        distanciaChunks: 40,
         distanciaPreloadChunks: 1,
         passoTerreno: 2,
         tempoGeracaoChunksMs: 3.5,
@@ -18,9 +18,9 @@ export const CONFIG = {
         nivelDoMar: 0
     },
     movimento: {
-        velocidade: 300,
+        velocidade: 30,
         gravidade: 30,
-        pulo: 200,
+        pulo: 20,
         alturaMaximaPasso: 1.35
     },
     renderizacao: {
@@ -44,7 +44,7 @@ export const CONFIG = {
         duracaoMinutos: 1,
         atualizacoesPorSegundo: 12,
         raioAstros: 900,
-        quantidadeEstrelas: 700
+        quantidadeEstrelas: 300
     },
     vento: {
         direcaoX: 0.85,
@@ -56,14 +56,26 @@ export const CONFIG = {
     grama: {
         ativa: true,
         distanciaChunks: 3,
-        tufosPorChunk: 180,
-        tilesPorFrame: 2,
-        segmentos: 5,
-        alturaMin: 0.55,
-        alturaMax: 1.25,
-        larguraMin: 0.035,
-        larguraMax: 0.085,
-        alturaMaximaTerreno: 36
+        tufosPorChunk: 1500,
+        tilesPorFrame: 1,
+        segmentos: 3,
+        alturaMin: 0.95,
+        alturaMax: 1.75,
+        larguraMin: 0.075,
+        larguraMax: 0.75,
+        alturaMaximaTerreno: 36,
+        distante: {
+            ativa: true,
+            modo: 'points',
+            distanciaChunks: 12,
+            tufosPorChunk: 80,
+            tilesPorFrame: 1,
+            segmentos: 1, 
+            alturaMin: 2.0,
+            alturaMax: 2.0,
+            larguraMin: 0.8,
+            larguraMax: 6.0
+        }
     }
 };
 

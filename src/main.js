@@ -18,8 +18,8 @@ scene.add(player);
 
 const diagnostics = createPerformanceDiagnostics(renderer);
 const dayNightCycle = createDayNightCycle(scene, camera);
-const { getHeight, updateChunks, dispose } = createTerrain(scene, diagnostics);
-const grass = createGrass(scene, getHeight, diagnostics);
+const { getHeight, getSample, updateChunks, dispose } = createTerrain(scene, diagnostics);
+const grass = createGrass(scene, getHeight, getSample, diagnostics);
 
 player.position.set(0, getHeight(0, 0) + CONFIG.terreno.alturaOlhos + 2, 0);
 
