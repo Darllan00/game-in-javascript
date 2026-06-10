@@ -17,6 +17,26 @@ body {
     z-index: 10;
 }
 
+.split-crosshair {
+    position: absolute;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    color: rgba(255, 255, 255, 0.72);
+    font-size: 24px;
+    font-weight: bold;
+    line-height: 1;
+    pointer-events: none;
+    z-index: 10;
+}
+
+.split-crosshair-1 {
+    left: 25%;
+}
+
+.split-crosshair-2 {
+    left: 75%;
+}
+
 #fps-counter {
     position: absolute;
     top: 12px;

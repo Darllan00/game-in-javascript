@@ -8,11 +8,14 @@ const MAX_PITCH = Math.PI / 2 - 0.08;
 const MIN_PITCH = -MAX_PITCH;
 const PLAYER_ONE_BODY_LAYER = 1;
 const PLAYER_TWO_BODY_LAYER = 2;
+const PLAYER_HITBOX_RADIUS = 0.55;
+const PLAYER_HITBOX_HEIGHT = 2.0;
 
 const forwardVector = new THREE.Vector3();
 const rightVector = new THREE.Vector3();
 const movementVector = new THREE.Vector3();
 const cameraEuler = new THREE.Euler(0, 0, 0, 'YXZ');
+const hitboxDelta = new THREE.Vector2();
 
 function createKeyState() {
     return {
@@ -85,6 +88,10 @@ function createCoopPlayer({ color, label, camera, startX, startZ, yaw, getHeight
             velocidadeY: 0,
             noChao: false
         },
+        hitbox: {
+            radius: PLAYER_HITBOX_RADIUS,
+            height: PLAYER_HITBOX_HEIGHT
+        },
         input: {
             x: 0,
             z: 0,
@@ -137,6 +144,41 @@ function updateCoopPlayerPhysics(delta, player, getHeight) {
         player.state.noChao = true;
     } else {
         player.state.noChao = false;
+    }
+}
+
+function resolvePlayerHitboxes(players, getHeight) {
+    for (let i = 0; i < players.length; i++) {
+        for (let j = i + 1; j < players.length; j++) {
+            const a = players[i];
+            const b = players[j];
+            const aPosition = a.group.position;
+            const bPosition = b.group.position;
+            const verticalDistance = Math.abs(aPosition.y - bPosition.y);
+            const maxVerticalDistance = (a.hitbox.height + b.hitbox.height) / 2;
+            if (verticalDistance > maxVerticalDistance) continue;
+
+            hitboxDelta.set(bPosition.x - aPosition.x, bPosition.z - aPosition.z);
+            const distanceSq = hitboxDelta.lengthSq();
+            const minDistance = a.hitbox.radius + b.hitbox.radius;
+            if (distanceSq >= minDistance * minDistance) continue;
+
+            if (distanceSq === 0) {
+                hitboxDelta.set(1, 0);
+            } else {
+                hitboxDelta.multiplyScalar(1 / Math.sqrt(distanceSq));
+            }
+
+            const overlap = minDistance - Math.sqrt(Math.max(distanceSq, 0.0001));
+            const push = overlap / 2;
+            aPosition.x -= hitboxDelta.x * push;
+            aPosition.z -= hitboxDelta.y * push;
+            bPosition.x += hitboxDelta.x * push;
+            bPosition.z += hitboxDelta.y * push;
+
+            aPosition.y = Math.max(aPosition.y, getHeight(aPosition.x, aPosition.z) + CONFIG.terreno.alturaOlhos);
+            bPosition.y = Math.max(bPosition.y, getHeight(bPosition.x, bPosition.z) + CONFIG.terreno.alturaOlhos);
+        }
     }
 }
 
@@ -209,6 +251,15 @@ export function createLocalCoopMode({ scene, camera, renderer, getHeight }) {
     const menu = document.getElementById('menu');
     const crosshair = document.getElementById('crosshair');
     if (crosshair) crosshair.style.display = 'none';
+    const splitCrosshairs = [
+        document.createElement('div'),
+        document.createElement('div')
+    ];
+    splitCrosshairs.forEach((item, index) => {
+        item.className = `split-crosshair split-crosshair-${index + 1}`;
+        item.textContent = '+';
+        document.body.appendChild(item);
+    });
 
     function start() {
         isStarted = true;
@@ -271,6 +322,9 @@ export function createLocalCoopMode({ scene, camera, renderer, getHeight }) {
         if (isStarted) {
             for (const player of players) {
                 updateCoopPlayerPhysics(delta, player, getHeight);
+            }
+            resolvePlayerHitboxes(players, getHeight);
+            for (const player of players) {
                 updateCoopCamera(player, delta);
             }
         }
@@ -312,6 +366,9 @@ export function createLocalCoopMode({ scene, camera, renderer, getHeight }) {
     }
 
     function dispose() {
+        for (const item of splitCrosshairs) {
+            item.remove();
+        }
         for (const player of players) {
             scene.remove(player.group);
             player.geometry.dispose();
