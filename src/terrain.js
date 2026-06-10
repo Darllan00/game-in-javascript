@@ -170,22 +170,36 @@ export function createTerrain(scene, diagnostics) {
     const queuedSuperChunkKeys = new Set();
     let lastPlayerChunkX = null;
     let lastPlayerChunkZ = null;
+    let lastFocusSignature = '';
+    let lastChunkFocuses = [];
     let didInitialChunkBurst = false;
     let activeChunkJob = null;
     let queueBuildJob = null;
     let lastChunkUpdateTime = performance.now();
 
-    function getChunkDistance(cx, cz, playerChunkX = lastPlayerChunkX, playerChunkZ = lastPlayerChunkZ) {
-        if (playerChunkX === null || playerChunkZ === null) return 0;
-        return Math.max(Math.abs(cx - playerChunkX), Math.abs(cz - playerChunkZ));
+    function getChunkDistance(cx, cz, playerChunkX = null, playerChunkZ = null) {
+        if (playerChunkX !== null && playerChunkZ !== null) {
+            return Math.max(Math.abs(cx - playerChunkX), Math.abs(cz - playerChunkZ));
+        }
+
+        if (!lastChunkFocuses.length) return 0;
+
+        let closestDistance = Infinity;
+        for (const focus of lastChunkFocuses) {
+            closestDistance = Math.min(
+                closestDistance,
+                Math.max(Math.abs(cx - focus.chunkX), Math.abs(cz - focus.chunkZ))
+            );
+        }
+        return closestDistance;
     }
 
-    function isChunkVisible(cx, cz, playerChunkX = lastPlayerChunkX, playerChunkZ = lastPlayerChunkZ) {
+    function isChunkVisible(cx, cz, playerChunkX = null, playerChunkZ = null) {
         return getChunkDistance(cx, cz, playerChunkX, playerChunkZ) <= INDIVIDUAL_PREFETCH_DISTANCE;
     }
 
-    function isChunkNeeded(cx, cz, playerChunkX = lastPlayerChunkX, playerChunkZ = lastPlayerChunkZ) {
-        if (playerChunkX === null || playerChunkZ === null) return false;
+    function isChunkNeeded(cx, cz, playerChunkX = null, playerChunkZ = null) {
+        if ((playerChunkX === null || playerChunkZ === null) && !lastChunkFocuses.length) return false;
         return getChunkDistance(cx, cz, playerChunkX, playerChunkZ) <= INDIVIDUAL_PREFETCH_DISTANCE;
     }
 
@@ -217,21 +231,33 @@ export function createTerrain(scene, diagnostics) {
         };
     }
 
-    function getSuperChunkDistance(sx, sz, playerChunkX = lastPlayerChunkX, playerChunkZ = lastPlayerChunkZ) {
-        if (playerChunkX === null || playerChunkZ === null) return 0;
-
+    function getSuperChunkDistanceForFocus(sx, sz, focus) {
         const { minCx, minCz, maxCx, maxCz } = getSuperChunkChunkBounds(sx, sz);
-        const dx = playerChunkX < minCx ? minCx - playerChunkX : Math.max(0, playerChunkX - maxCx);
-        const dz = playerChunkZ < minCz ? minCz - playerChunkZ : Math.max(0, playerChunkZ - maxCz);
+        const dx = focus.chunkX < minCx ? minCx - focus.chunkX : Math.max(0, focus.chunkX - maxCx);
+        const dz = focus.chunkZ < minCz ? minCz - focus.chunkZ : Math.max(0, focus.chunkZ - maxCz);
         return Math.max(dx, dz);
     }
 
-    function isSuperChunkVisible(sx, sz, playerChunkX = lastPlayerChunkX, playerChunkZ = lastPlayerChunkZ) {
+    function getSuperChunkDistance(sx, sz, playerChunkX = null, playerChunkZ = null) {
+        if (playerChunkX !== null && playerChunkZ !== null) {
+            return getSuperChunkDistanceForFocus(sx, sz, { chunkX: playerChunkX, chunkZ: playerChunkZ });
+        }
+
+        if (!lastChunkFocuses.length) return 0;
+
+        let closestDistance = Infinity;
+        for (const focus of lastChunkFocuses) {
+            closestDistance = Math.min(closestDistance, getSuperChunkDistanceForFocus(sx, sz, focus));
+        }
+        return closestDistance;
+    }
+
+    function isSuperChunkVisible(sx, sz, playerChunkX = null, playerChunkZ = null) {
         const distance = getSuperChunkDistance(sx, sz, playerChunkX, playerChunkZ);
         return distance <= VIEW_DISTANCE;
     }
 
-    function isSuperChunkNeeded(sx, sz, playerChunkX = lastPlayerChunkX, playerChunkZ = lastPlayerChunkZ) {
+    function isSuperChunkNeeded(sx, sz, playerChunkX = null, playerChunkZ = null) {
         const distance = getSuperChunkDistance(sx, sz, playerChunkX, playerChunkZ);
         return distance <= PREFETCH_DISTANCE;
     }
@@ -259,13 +285,13 @@ export function createTerrain(scene, diagnostics) {
         return terrainStep >= SIMPLE_SAMPLE_TERRAIN_STEP ? 'simple' : 'full';
     }
 
-    function enqueueChunk(cx, cz, playerChunkX, playerChunkZ) {
+    function enqueueChunk(cx, cz) {
         const key = getChunkKey(cx, cz);
-        if (restoreRetiredChunk(key, playerChunkX, playerChunkZ)) return;
+        if (restoreRetiredChunk(key)) return;
         if (activeChunkJob?.key === key) return;
         if (chunks.has(key) || queuedChunkKeys.has(key)) return;
 
-        const visibleDistance = Math.max(Math.abs(cx - playerChunkX), Math.abs(cz - playerChunkZ));
+        const visibleDistance = getChunkDistance(cx, cz);
         const terrainStep = getTerrainStepForDistance(visibleDistance);
         chunkLoadQueue.push({
             cx,
@@ -281,17 +307,17 @@ export function createTerrain(scene, diagnostics) {
         diagnostics.setCounter('chunkQueue', chunkLoadQueue.length);
     }
 
-    function enqueueSuperChunkForChunk(cx, cz, playerChunkX, playerChunkZ) {
+    function enqueueSuperChunkForChunk(cx, cz) {
         const sx = getSuperChunkIndex(cx);
         const sz = getSuperChunkIndex(cz);
         const key = getSuperChunkKey(sx, sz);
 
         if (!hasSuperChunkArea(sx, sz)) return;
-        if (!isSuperChunkNeeded(sx, sz, playerChunkX, playerChunkZ)) return;
+        if (!isSuperChunkNeeded(sx, sz)) return;
         if (activeChunkJob?.key === key) return;
         if (superChunks.has(key) || queuedSuperChunkKeys.has(key)) return;
 
-        const visibleDistance = getSuperChunkDistance(sx, sz, playerChunkX, playerChunkZ);
+        const visibleDistance = getSuperChunkDistance(sx, sz);
         chunkLoadQueue.push({
             sx,
             sz,
@@ -304,17 +330,17 @@ export function createTerrain(scene, diagnostics) {
         diagnostics.setCounter('chunkQueue', chunkLoadQueue.length);
     }
 
-    function refreshChunkQueue(playerChunkX, playerChunkZ) {
+    function refreshChunkQueue() {
         for (const key of [...chunks.keys()]) {
             const chunk = chunks.get(key);
-            if (!isChunkNeeded(chunk.cx, chunk.cz, playerChunkX, playerChunkZ)) {
+            if (!isChunkNeeded(chunk.cx, chunk.cz)) {
                 retireChunk(key);
             }
         }
 
         for (const key of [...superChunks.keys()]) {
             const superChunk = superChunks.get(key);
-            if (!isSuperChunkNeeded(superChunk.sx, superChunk.sz, playerChunkX, playerChunkZ)) {
+            if (!isSuperChunkNeeded(superChunk.sx, superChunk.sz)) {
                 unloadSuperChunk(key);
             }
         }
@@ -326,14 +352,14 @@ export function createTerrain(scene, diagnostics) {
 
         let visibleChunks = 0;
         for (const chunk of chunks.values()) {
-            chunk.group.visible = isChunkVisible(chunk.cx, chunk.cz, playerChunkX, playerChunkZ);
+            chunk.group.visible = isChunkVisible(chunk.cx, chunk.cz);
             if (chunk.group.visible) visibleChunks++;
         }
         diagnostics.setCounter('visibleChunks', visibleChunks);
 
         let visibleSuperChunks = 0;
         for (const superChunk of superChunks.values()) {
-            superChunk.group.visible = isSuperChunkVisible(superChunk.sx, superChunk.sz, playerChunkX, playerChunkZ);
+            superChunk.group.visible = isSuperChunkVisible(superChunk.sx, superChunk.sz);
             if (superChunk.group.visible) visibleSuperChunks++;
         }
         diagnostics.setCounter('visibleSuperChunks', visibleSuperChunks);
@@ -342,7 +368,7 @@ export function createTerrain(scene, diagnostics) {
             activeChunkJob = null;
         }
 
-        queueBuildJob = createQueueBuildJob(playerChunkX, playerChunkZ);
+        queueBuildJob = createQueueBuildJob(lastChunkFocuses);
     }
 
     function processInitialChunkBurst() {
@@ -397,10 +423,10 @@ export function createTerrain(scene, diagnostics) {
         }
     }
 
-    function createQueueBuildJob(playerChunkX, playerChunkZ) {
+    function createQueueBuildJob(focuses) {
         return {
-            playerChunkX,
-            playerChunkZ,
+            focuses: [...focuses],
+            focusIndex: 0,
             ring: 0,
             index: 0
         };
@@ -428,19 +454,29 @@ export function createTerrain(scene, diagnostics) {
 
     function processQueueBuild(deadline) {
         while (queueBuildJob && chunkLoadQueue.length < MAX_CHUNK_QUEUE_LENGTH && performance.now() < deadline) {
+            if (!queueBuildJob.focuses.length) {
+                queueBuildJob = null;
+                return;
+            }
+
             const ringLength = getRingLength(queueBuildJob.ring);
+            const focus = queueBuildJob.focuses[queueBuildJob.focusIndex];
             const { dx, dz } = getRingOffset(queueBuildJob.ring, queueBuildJob.index);
-            const cx = queueBuildJob.playerChunkX + dx;
-            const cz = queueBuildJob.playerChunkZ + dz;
+            const cx = focus.chunkX + dx;
+            const cz = focus.chunkZ + dz;
 
             if (hasChunkArea(cx, cz)) {
-                enqueueSuperChunkForChunk(cx, cz, queueBuildJob.playerChunkX, queueBuildJob.playerChunkZ);
+                enqueueSuperChunkForChunk(cx, cz);
                 if (queueBuildJob.ring <= INDIVIDUAL_PREFETCH_DISTANCE) {
-                    enqueueChunk(cx, cz, queueBuildJob.playerChunkX, queueBuildJob.playerChunkZ);
+                    enqueueChunk(cx, cz);
                 }
             }
 
-            queueBuildJob.index++;
+            queueBuildJob.focusIndex++;
+            if (queueBuildJob.focusIndex >= queueBuildJob.focuses.length) {
+                queueBuildJob.focusIndex = 0;
+                queueBuildJob.index++;
+            }
             if (queueBuildJob.index >= ringLength) {
                 queueBuildJob.ring++;
                 queueBuildJob.index = 0;
@@ -699,12 +735,12 @@ export function createTerrain(scene, diagnostics) {
         diagnostics.setCounter('visibleSuperChunks', [...superChunks.values()].filter((item) => item.group.visible).length);
     }
 
-    function restoreRetiredChunk(key, playerChunkX, playerChunkZ) {
+    function restoreRetiredChunk(key) {
         const chunk = retiredChunks.get(key);
         if (!chunk) return false;
 
         retiredChunks.delete(key);
-        chunk.group.visible = isChunkVisible(chunk.cx, chunk.cz, playerChunkX, playerChunkZ);
+        chunk.group.visible = isChunkVisible(chunk.cx, chunk.cz);
         scene.add(chunk.group);
         chunks.set(key, chunk);
         diagnostics.setCounter('loadedChunks', chunks.size);
@@ -757,19 +793,44 @@ export function createTerrain(scene, diagnostics) {
         terrainMaterial.dispose();
     }
 
-    function updateChunks(playerX, playerZ, isPlayerMoving = false) {
+    function createChunkFocuses(positions) {
+        const seen = new Set();
+        const focuses = [];
+
+        for (const position of positions) {
+            const chunkX = Math.floor(position.x / CHUNK_SIZE);
+            const chunkZ = Math.floor(position.z / CHUNK_SIZE);
+            const key = `${chunkX},${chunkZ}`;
+            if (seen.has(key)) continue;
+
+            seen.add(key);
+            focuses.push({ chunkX, chunkZ });
+        }
+
+        return focuses;
+    }
+
+    function getFocusSignature(focuses) {
+        return focuses.map((focus) => `${focus.chunkX},${focus.chunkZ}`).join('|');
+    }
+
+    function updateChunksForPlayers(playerPositions, isPlayerMoving = false) {
         const now = performance.now();
         const previousFrameMs = now - lastChunkUpdateTime;
         lastChunkUpdateTime = now;
 
-        const playerChunkX = Math.floor(playerX / CHUNK_SIZE);
-        const playerChunkZ = Math.floor(playerZ / CHUNK_SIZE);
-        const didChangeChunk = playerChunkX !== lastPlayerChunkX || playerChunkZ !== lastPlayerChunkZ;
+        const focuses = createChunkFocuses(playerPositions);
+        if (!focuses.length) return;
+
+        const focusSignature = getFocusSignature(focuses);
+        const didChangeChunk = focusSignature !== lastFocusSignature;
 
         if (didChangeChunk) {
-            lastPlayerChunkX = playerChunkX;
-            lastPlayerChunkZ = playerChunkZ;
-            refreshChunkQueue(playerChunkX, playerChunkZ);
+            lastFocusSignature = focusSignature;
+            lastChunkFocuses = focuses;
+            lastPlayerChunkX = focuses[0].chunkX;
+            lastPlayerChunkZ = focuses[0].chunkZ;
+            refreshChunkQueue();
         }
 
         if (isPlayerMoving && !didChangeChunk) return;
@@ -781,6 +842,10 @@ export function createTerrain(scene, diagnostics) {
             processInitialChunkBurst();
             didInitialChunkBurst = true;
         }
+    }
+
+    function updateChunks(playerX, playerZ, isPlayerMoving = false) {
+        updateChunksForPlayers([{ x: playerX, z: playerZ }], isPlayerMoving);
     }
 
     function getHeight(posX, posZ) {
@@ -798,5 +863,5 @@ export function createTerrain(scene, diagnostics) {
 
     updateChunks(0, 0);
 
-    return { getHeight, getSample, updateChunks, dispose };
+    return { getHeight, getSample, updateChunks, updateChunksForPlayers, dispose };
 }

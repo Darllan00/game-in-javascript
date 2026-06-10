@@ -1,31 +1,36 @@
 import * as THREE from 'three';
 import { scene, camera, renderer } from './world.js';
-import { state } from './state.js';
-import { setupControls, keys } from './input.js';
 import { createTerrain, setTerrainSeed } from './terrain.js';
-import { updatePhysics } from './physics.js';
-import { CONFIG } from './config.js';
 import { buildSeedUrl, createRandomSeedText, resolveWorldSeed } from './seed.js';
 import { createPerformanceDiagnostics } from './performanceDiagnostics.js';
 import { createDayNightCycle } from './dayNightCycle.js';
 import { createGrass } from './grass.js';
+import { CONFIG } from './config.js';
+import { GAME_MODE, buildModeUrl, getGameMode } from './gameModes.js';
+import { createSinglePlayerMode } from './singlePlayerMode.js';
+import { createLocalCoopMode } from './localCoopMode.js';
 
 const worldSeed = resolveWorldSeed();
 setTerrainSeed(worldSeed.numeric);
 
-const { controls, player } = setupControls(camera);
-scene.add(player);
-
 const diagnostics = createPerformanceDiagnostics(renderer);
 const dayNightCycle = createDayNightCycle(scene, camera);
-const { getHeight, getSample, updateChunks, dispose } = createTerrain(scene, diagnostics);
+const { getHeight, getSample, updateChunksForPlayers, dispose } = createTerrain(scene, diagnostics);
 const grass = createGrass(scene, getHeight, getSample, diagnostics);
+const gameMode = getGameMode();
+const mode = gameMode === GAME_MODE.LOCAL_COOP
+    ? createLocalCoopMode({ scene, camera, renderer, getHeight })
+    : createSinglePlayerMode({ scene, camera, renderer, getHeight });
 
-player.position.set(0, getHeight(0, 0) + CONFIG.terreno.alturaOlhos + 2, 0);
+if (mode.player) {
+    mode.player.position.set(0, getHeight(0, 0) + CONFIG.terreno.alturaOlhos + 2, 0);
+}
 
 const seedValue = document.getElementById('seed-value');
 const copySeedButton = document.getElementById('copy-seed');
 const newWorldButton = document.getElementById('new-world');
+const singleModeButton = document.getElementById('single-mode');
+const coopModeButton = document.getElementById('coop-mode');
 const fpsCounter = document.getElementById('fps-counter');
 
 if (seedValue) {
@@ -48,7 +53,21 @@ copySeedButton?.addEventListener('click', async (event) => {
 
 newWorldButton?.addEventListener('click', (event) => {
     event.stopPropagation();
-    window.location.href = buildSeedUrl(createRandomSeedText()).toString();
+    const url = buildSeedUrl(createRandomSeedText());
+    if (gameMode === GAME_MODE.LOCAL_COOP) {
+        url.searchParams.set('mode', GAME_MODE.LOCAL_COOP);
+    }
+    window.location.href = url.toString();
+});
+
+singleModeButton?.addEventListener('click', (event) => {
+    event.stopPropagation();
+    window.location.href = buildModeUrl(GAME_MODE.SINGLE).toString();
+});
+
+coopModeButton?.addEventListener('click', (event) => {
+    event.stopPropagation();
+    window.location.href = buildModeUrl(GAME_MODE.LOCAL_COOP).toString();
 });
 
 const clock = new THREE.Clock();
@@ -76,28 +95,26 @@ function loop() {
     updateFpsCounter(delta);
     dayNightCycle.update(delta);
 
-    if (controls.isLocked) {
-        const isPlayerMoving = keys.w || keys.a || keys.s || keys.d;
-        updatePhysics(delta, controls, player, keys, state, getHeight);
-        updateChunks(player.position.x, player.position.z, isPlayerMoving);
-        grass.update(delta, player.position.x, player.position.z, isPlayerMoving);
-    } else {
-        grass.update(delta, player.position.x, player.position.z, false);
+    const modeState = mode.update(delta);
+    const primary = modeState.primary;
+    if (modeState.isActive) {
+        updateChunksForPlayers(modeState.focuses, modeState.isMoving);
     }
+    grass.update(delta, primary.x, primary.z, modeState.isActive && modeState.isMoving);
 
-    renderer.render(scene, camera);
+    mode.render();
 }
 
 loop();
 
 window.addEventListener('resize', () => {
-    camera.aspect = window.innerWidth / window.innerHeight;
-    camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
+    mode.resize(window.innerWidth, window.innerHeight);
 });
 
 window.addEventListener('beforeunload', () => {
     dayNightCycle.dispose();
     grass.dispose();
+    mode.dispose();
     dispose();
 });

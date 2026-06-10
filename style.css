@@ -71,7 +71,8 @@ body {
     justify-content: center;
 }
 
-.seed-actions button {
+.seed-actions button,
+#mode-controls button {
     border: 1px solid rgba(255, 255, 255, 0.35);
     background: rgba(255, 255, 255, 0.12);
     color: white;
@@ -80,6 +81,14 @@ body {
     cursor: pointer;
 }
 
-.seed-actions button:hover {
+.seed-actions button:hover,
+#mode-controls button:hover {
     background: rgba(255, 255, 255, 0.2);
+}
+
+#mode-controls {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 18px;
+    cursor: default;
 }
