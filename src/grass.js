@@ -9,6 +9,10 @@ const lightColor = new THREE.Color();
 const windDirection = new THREE.Vector2(CONFIG.vento.direcaoX, CONFIG.vento.direcaoZ).normalize();
 const SNOW_GRASS_CUTOFF = 33.5;
 const ROCK_GRASS_CUTOFF = 0.48;
+const GRASS_TILE_PROBE_STEPS = 4;
+const EMPTY_GRASS_TILE_CACHE_LIMIT = 8192;
+const EMPTY_GRASS_CHUNK_CACHE_LIMIT = 4096;
+const GRASS_CHUNK_PROBE_CACHE_LIMIT = 4096;
 
 function clamp01(value) {
     return THREE.MathUtils.clamp(value, 0, 1);
@@ -409,6 +413,9 @@ export function createGrass(scene, getHeight, getTerrainSample, diagnostics, opt
     const profiles = createGrassProfiles();
     const activeTiles = new Map();
     const queuedTileKeys = new Set();
+    const emptyTileKeys = new Set();
+    const emptyChunkKeys = new Set();
+    const grassChunkKeys = new Set();
     const getChunkGroup = options.getChunkGroup ?? (() => null);
     let tileBuildQueue = [];
     let lastPlayerChunkX = null;
@@ -441,6 +448,61 @@ export function createGrass(scene, getHeight, getTerrainSample, diagnostics, opt
     const farMaterial = CONFIG.grama.distante.modo === 'points'
         ? createFarGrassMaterial()
         : createGrassMaterial({ animated: false });
+
+    function rememberLimitedSetValue(set, value, limit) {
+        set.delete(value);
+        set.add(value);
+        if (set.size > limit) {
+            set.delete(set.values().next().value);
+        }
+    }
+
+    function rememberEmptyTile(key) {
+        rememberLimitedSetValue(emptyTileKeys, key, EMPTY_GRASS_TILE_CACHE_LIMIT);
+        diagnostics?.setCounter('grassEmptyTiles', emptyTileKeys.size);
+    }
+
+    function rememberEmptyChunk(cx, cz) {
+        const coordKey = getGrassTileCoordKey(cx, cz);
+        rememberLimitedSetValue(emptyChunkKeys, coordKey, EMPTY_GRASS_CHUNK_CACHE_LIMIT);
+        tileBuildQueue = tileBuildQueue.filter((item) => getGrassTileCoordKey(item.cx, item.cz) !== coordKey);
+        queuedTileKeys.clear();
+        for (const item of tileBuildQueue) {
+            queuedTileKeys.add(item.key);
+        }
+        diagnostics?.setCounter('grassEmptyChunks', emptyChunkKeys.size);
+        diagnostics?.setCounter('grassQueue', tileBuildQueue.length);
+    }
+
+    function rememberGrassChunk(cx, cz) {
+        rememberLimitedSetValue(grassChunkKeys, getGrassTileCoordKey(cx, cz), GRASS_CHUNK_PROBE_CACHE_LIMIT);
+    }
+
+    function canChunkContainGrass(cx, cz) {
+        const coordKey = getGrassTileCoordKey(cx, cz);
+        if (emptyChunkKeys.has(coordKey)) return false;
+        if (grassChunkKeys.has(coordKey)) return true;
+
+        const startX = cx * CHUNK_SIZE;
+        const startZ = cz * CHUNK_SIZE;
+        for (let ix = 0; ix < GRASS_TILE_PROBE_STEPS; ix++) {
+            const rx = (ix + 0.5) / GRASS_TILE_PROBE_STEPS;
+            for (let iz = 0; iz < GRASS_TILE_PROBE_STEPS; iz++) {
+                const rz = (iz + 0.5) / GRASS_TILE_PROBE_STEPS;
+                const worldX = startX + rx * CHUNK_SIZE;
+                const worldZ = startZ + rz * CHUNK_SIZE;
+                const terrainHeight = getHeight(worldX, worldZ);
+                const terrainSample = getTerrainSample(worldX, worldZ);
+                if (canPlaceGrass(terrainSample, terrainHeight)) {
+                    rememberGrassChunk(cx, cz);
+                    return true;
+                }
+            }
+        }
+
+        rememberEmptyChunk(cx, cz);
+        return false;
+    }
 
     function removeActiveTile(key) {
         const tile = activeTiles.get(key);
@@ -481,9 +543,11 @@ export function createGrass(scene, getHeight, getTerrainSample, diagnostics, opt
 
     function queueTile(type, cx, cz, priority) {
         if (!isInsideWorld(cx, cz)) return;
+        if (emptyChunkKeys.has(getGrassTileCoordKey(cx, cz))) return;
 
         const key = getGrassTileKey(type, cx, cz);
-        if (activeTiles.has(key) || queuedTileKeys.has(key)) return;
+        if (activeTiles.has(key) || queuedTileKeys.has(key) || emptyTileKeys.has(key)) return;
+        if (!canChunkContainGrass(cx, cz)) return;
 
         tileBuildQueue.push({ cx, cz, key, type, priority });
         queuedTileKeys.add(key);
@@ -557,7 +621,12 @@ export function createGrass(scene, getHeight, getTerrainSample, diagnostics, opt
             if (!type) continue;
 
             const key = getGrassTileKey(type, item.cx, item.cz);
-            if (activeTiles.has(key) || nextQueuedKeys.has(key)) continue;
+            if (
+                activeTiles.has(key)
+                || nextQueuedKeys.has(key)
+                || emptyTileKeys.has(key)
+                || emptyChunkKeys.has(getGrassTileCoordKey(item.cx, item.cz))
+            ) continue;
 
             nextQueue.push({
                 ...item,
@@ -597,6 +666,7 @@ export function createGrass(scene, getHeight, getTerrainSample, diagnostics, opt
                     if (!type) continue;
 
                     const key = getGrassTileKey(type, cx, cz);
+                    if (emptyTileKeys.has(key) || emptyChunkKeys.has(getGrassTileCoordKey(cx, cz))) continue;
                     desiredKeys.add(key);
                     queueTile(type, cx, cz, distance);
                 }
@@ -691,7 +761,10 @@ export function createGrass(scene, getHeight, getTerrainSample, diagnostics, opt
                     ? midMaterial
                     : farMaterial;
             const tile = createGrassTile(item.cx, item.cz, material, getHeight, getTerrainSample, profile);
-            if (!tile) return false;
+            if (!tile) {
+                rememberEmptyTile(item.key);
+                return false;
+            }
 
             if (!attachTileToChunk(tile, item.cx, item.cz)) {
                 disposeTile(tile);
