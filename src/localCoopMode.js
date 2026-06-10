@@ -338,7 +338,7 @@ export function createLocalCoopMode({ scene, camera, renderer, getHeight }) {
         };
     }
 
-    function render() {
+    function render(grass) {
         const width = window.innerWidth;
         const height = window.innerHeight;
         const leftWidth = Math.floor(width / 2);
@@ -346,14 +346,17 @@ export function createLocalCoopMode({ scene, camera, renderer, getHeight }) {
 
         renderer.setScissorTest(true);
 
+        grass?.setVisibilityForFocus?.(playerOne.group.position);
         renderer.setViewport(0, 0, leftWidth, height);
         renderer.setScissor(0, 0, leftWidth, height);
         renderer.render(scene, playerOne.camera);
 
+        grass?.setVisibilityForFocus?.(playerTwo.group.position);
         renderer.setViewport(leftWidth, 0, rightWidth, height);
         renderer.setScissor(leftWidth, 0, rightWidth, height);
         renderer.render(scene, playerTwo.camera);
 
+        grass?.restoreVisibility?.();
         renderer.setScissorTest(false);
     }
 

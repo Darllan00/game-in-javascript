@@ -15,8 +15,12 @@ setTerrainSeed(worldSeed.numeric);
 
 const diagnostics = createPerformanceDiagnostics(renderer);
 const dayNightCycle = createDayNightCycle(scene, camera);
-const { getHeight, getSample, updateChunksForPlayers, dispose } = createTerrain(scene, diagnostics);
-const grass = createGrass(scene, getHeight, getSample, diagnostics);
+const terrain = createTerrain(scene, diagnostics);
+const { getHeight, getSample, getChunkGroup, setChunkLifecycle, updateChunksForPlayers, dispose } = terrain;
+const grass = createGrass(scene, getHeight, getSample, diagnostics, { getChunkGroup });
+setChunkLifecycle({
+    onChunkDisposed: grass.disposeChunk
+});
 const gameMode = getGameMode();
 const mode = gameMode === GAME_MODE.LOCAL_COOP
     ? createLocalCoopMode({ scene, camera, renderer, getHeight })
@@ -96,13 +100,12 @@ function loop() {
     dayNightCycle.update(delta);
 
     const modeState = mode.update(delta);
-    const primary = modeState.primary;
     if (modeState.isActive) {
         updateChunksForPlayers(modeState.focuses, modeState.isMoving);
     }
-    grass.update(delta, primary.x, primary.z, modeState.isActive && modeState.isMoving);
+    grass.updateForPlayers(delta, modeState.focuses, modeState.isActive && modeState.isMoving);
 
-    mode.render();
+    mode.render(grass);
 }
 
 loop();

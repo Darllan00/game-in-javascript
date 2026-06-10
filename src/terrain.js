@@ -165,6 +165,7 @@ export function createTerrain(scene, diagnostics) {
     const retiredChunks = new Map();
     const sharedSampleCache = createTerrainSampleCache(TERRAIN_SAMPLE_CACHE_LIMIT);
     const getCachedHeight = createHeightCache();
+    let chunkLifecycle = null;
     let chunkLoadQueue = [];
     const queuedChunkKeys = new Set();
     const queuedSuperChunkKeys = new Set();
@@ -710,6 +711,7 @@ export function createTerrain(scene, diagnostics) {
         const chunk = chunks.get(key);
         if (!chunk) return;
 
+        chunkLifecycle?.onChunkDisposed?.(chunk);
         chunk.group.userData.disposed = true;
         scene.remove(chunk.group);
         chunk.group.traverse((object) => {
@@ -770,6 +772,7 @@ export function createTerrain(scene, diagnostics) {
         const chunk = retiredChunks.get(key);
         if (!chunk) return;
 
+        chunkLifecycle?.onChunkDisposed?.(chunk);
         chunk.group.userData.disposed = true;
         chunk.group.traverse((object) => {
             if (object.geometry) object.geometry.dispose();
@@ -861,7 +864,17 @@ export function createTerrain(scene, diagnostics) {
         return createTerrainSample(posX, posZ);
     }
 
+    function getChunkGroup(cx, cz) {
+        return chunks.get(getChunkKey(cx, cz))?.group
+            ?? retiredChunks.get(getChunkKey(cx, cz))?.group
+            ?? null;
+    }
+
+    function setChunkLifecycle(lifecycle) {
+        chunkLifecycle = lifecycle;
+    }
+
     updateChunks(0, 0);
 
-    return { getHeight, getSample, updateChunks, updateChunksForPlayers, dispose };
+    return { getHeight, getSample, getChunkGroup, setChunkLifecycle, updateChunks, updateChunksForPlayers, dispose };
 }

@@ -66,7 +66,7 @@ export const CONFIG = {
         tilesMovendoPorAtualizacao: 2,
         tilesRemovidosPorFrame: 24,
         distanciaChunks: 3,
-        tufosPorChunk: 2600,
+        tufosPorChunk: 3600,
         tilesPorFrame: 1,
         segmentos: 3,
         alturaMin: 0.55,
