@@ -228,70 +228,62 @@ function createBladeShape(segmentCount) {
     };
 }
 
-function createFarGrassTileGeometry(cx, cz, getHeight, getTerrainSample, profile) {
+function getGrassCollisionRadius(profile) {
+    return Math.max(0.15, Math.min(profile.larguraMax ?? 0.2, 0.8));
+}
+
+function isBlockedByTreeList(worldX, worldZ, radius, blockers) {
+    for (const tree of blockers) {
+        const checkRadius = tree.radius + radius;
+        const dx = tree.x - worldX;
+        const dz = tree.z - worldZ;
+        if (dx * dx + dz * dz <= checkRadius * checkRadius) return true;
+    }
+    return false;
+}
+
+function createGrassTileGeometryBuilder(cx, cz, getTerrainSample, profile, isPositionBlocked, blockers) {
+    const usePoints = profile.modo === 'points';
+    const shape = usePoints ? null : createBladeShape(profile.segmentos);
     const startX = cx * CHUNK_SIZE;
     const startZ = cz * CHUNK_SIZE;
     const positions = [];
-    const dryness = [];
-    const sizes = [];
-    let minTileY = Infinity;
-    let maxTileY = -Infinity;
-
-    for (let i = 0; i < profile.tufosPorChunk; i++) {
-        const rx = hash01(cx, cz, i);
-        const rz = hash01(cz, cx, i + 19);
-        const worldX = startX + rx * CHUNK_SIZE;
-        const worldZ = startZ + rz * CHUNK_SIZE;
-        const terrainHeight = getHeight(worldX, worldZ);
-        const terrainSample = getTerrainSample(worldX, worldZ);
-        if (!canPlaceGrass(terrainSample, terrainHeight)) continue;
-
-        const sizeSeed = hash01(worldX, worldZ, i + 63);
-        const drySeed = hash01(worldX, worldZ, i + 117);
-        const size = THREE.MathUtils.lerp(profile.larguraMin, profile.larguraMax, sizeSeed);
-        const height = THREE.MathUtils.lerp(profile.alturaMin, profile.alturaMax, sizeSeed);
-
-        positions.push(worldX - startX, terrainHeight + height * 0.5, worldZ - startZ);
-        dryness.push(getGrassDryness(terrainSample, drySeed));
-        sizes.push(size);
-        minTileY = Math.min(minTileY, terrainHeight);
-        maxTileY = Math.max(maxTileY, terrainHeight + height);
-    }
-
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(positions), 3));
-    geometry.setAttribute('aDryness', new THREE.BufferAttribute(new Float32Array(dryness), 1));
-    geometry.setAttribute('aSize', new THREE.BufferAttribute(new Float32Array(sizes), 1));
-
-    const centerY = Number.isFinite(minTileY) ? (minTileY + maxTileY) * 0.5 : 0;
-    const verticalRadius = Number.isFinite(minTileY) ? (maxTileY - minTileY) * 0.5 : 1;
-    geometry.boundingSphere = new THREE.Sphere(
-        new THREE.Vector3(CHUNK_SIZE * 0.5, centerY, CHUNK_SIZE * 0.5),
-        Math.sqrt(CHUNK_SIZE * CHUNK_SIZE * 0.5 + verticalRadius * verticalRadius) + profile.larguraMax
-    );
-
-    return geometry;
-}
-
-function createGrassTileGeometry(cx, cz, getHeight, getTerrainSample, profile) {
-    const shape = createBladeShape(profile.segmentos);
-    const startX = cx * CHUNK_SIZE;
-    const startZ = cz * CHUNK_SIZE;
     const offsets = [];
     const blades = [];
     const angles = [];
     const dryness = [];
+    const sizes = [];
     let minTileY = Infinity;
     let maxTileY = -Infinity;
+    let nextTuft = 0;
 
-    for (let i = 0; i < profile.tufosPorChunk; i++) {
+    function stepOne() {
+        const i = nextTuft++;
         const rx = hash01(cx, cz, i);
         const rz = hash01(cz, cx, i + 19);
         const worldX = startX + rx * CHUNK_SIZE;
         const worldZ = startZ + rz * CHUNK_SIZE;
-        const terrainHeight = getHeight(worldX, worldZ);
         const terrainSample = getTerrainSample(worldX, worldZ);
-        if (!canPlaceGrass(terrainSample, terrainHeight)) continue;
+        const terrainHeight = terrainSample.height;
+        if (!canPlaceGrass(terrainSample, terrainHeight)) return;
+        const collisionRadius = getGrassCollisionRadius(profile);
+        if (blockers
+            ? isBlockedByTreeList(worldX, worldZ, collisionRadius, blockers)
+            : isPositionBlocked(worldX, worldZ, collisionRadius)) return;
+
+        if (usePoints) {
+            const sizeSeed = hash01(worldX, worldZ, i + 63);
+            const drySeed = hash01(worldX, worldZ, i + 117);
+            const size = THREE.MathUtils.lerp(profile.larguraMin, profile.larguraMax, sizeSeed);
+            const height = THREE.MathUtils.lerp(profile.alturaMin, profile.alturaMax, sizeSeed);
+
+            positions.push(worldX - startX, terrainHeight + height * 0.5, worldZ - startZ);
+            dryness.push(getGrassDryness(terrainSample, drySeed));
+            sizes.push(size);
+            minTileY = Math.min(minTileY, terrainHeight);
+            maxTileY = Math.max(maxTileY, terrainHeight + height);
+            return;
+        }
 
         const scaleSeed = hash01(worldX, worldZ, i + 41);
         const widthSeed = hash01(worldZ, worldX, i + 63);
@@ -301,52 +293,77 @@ function createGrassTileGeometry(cx, cz, getHeight, getTerrainSample, profile) {
         const bladeWidth = THREE.MathUtils.lerp(profile.larguraMin, profile.larguraMax, widthSeed);
 
         offsets.push(worldX - startX, terrainHeight + 0.015, worldZ - startZ);
-        blades.push(
-            bladeHeight,
-            bladeWidth,
-            leanSeed
-        );
+        blades.push(bladeHeight, bladeWidth, leanSeed);
         angles.push(hash01(worldX, worldZ, i + 151) * Math.PI * 2);
         dryness.push(getGrassDryness(terrainSample, drySeed));
         minTileY = Math.min(minTileY, terrainHeight);
         maxTileY = Math.max(maxTileY, terrainHeight + bladeHeight);
     }
 
-    const geometry = new THREE.InstancedBufferGeometry();
-    geometry.setAttribute('position', new THREE.BufferAttribute(shape.vertices, 3));
-    geometry.setIndex(shape.indices);
-    geometry.setAttribute('aOffset', new THREE.InstancedBufferAttribute(new Float32Array(offsets), 3));
-    geometry.setAttribute('aBlade', new THREE.InstancedBufferAttribute(new Float32Array(blades), 3));
-    geometry.setAttribute('aAngle', new THREE.InstancedBufferAttribute(new Float32Array(angles), 1));
-    geometry.setAttribute('aDryness', new THREE.InstancedBufferAttribute(new Float32Array(dryness), 1));
-    geometry.instanceCount = offsets.length / 3;
-    const centerY = Number.isFinite(minTileY) ? (minTileY + maxTileY) * 0.5 : 0;
-    const verticalRadius = Number.isFinite(minTileY) ? (maxTileY - minTileY) * 0.5 : 1;
-    geometry.boundingSphere = new THREE.Sphere(
-        new THREE.Vector3(CHUNK_SIZE * 0.5, centerY, CHUNK_SIZE * 0.5),
-        Math.sqrt(CHUNK_SIZE * CHUNK_SIZE * 0.5 + verticalRadius * verticalRadius) + profile.alturaMax
-    );
-
-    return geometry;
-}
-
-function createGrassTile(cx, cz, material, getHeight, getTerrainSample, profile) {
-    const usePoints = profile.modo === 'points';
-    const geometry = usePoints
-        ? createFarGrassTileGeometry(cx, cz, getHeight, getTerrainSample, profile)
-        : createGrassTileGeometry(cx, cz, getHeight, getTerrainSample, profile);
-    const instanceCount = usePoints ? geometry.attributes.position.count : geometry.instanceCount;
-    if (instanceCount === 0) {
-        geometry.dispose();
-        return null;
+    function applyBoundingSphere(geometry, radiusPadding) {
+        const centerY = Number.isFinite(minTileY) ? (minTileY + maxTileY) * 0.5 : 0;
+        const verticalRadius = Number.isFinite(minTileY) ? (maxTileY - minTileY) * 0.5 : 1;
+        geometry.boundingSphere = new THREE.Sphere(
+            new THREE.Vector3(CHUNK_SIZE * 0.5, centerY, CHUNK_SIZE * 0.5),
+            Math.sqrt(CHUNK_SIZE * CHUNK_SIZE * 0.5 + verticalRadius * verticalRadius) + radiusPadding
+        );
     }
 
-    const mesh = usePoints
-        ? new THREE.Points(geometry, material)
-        : new THREE.Mesh(geometry, material);
-    mesh.position.set(cx * CHUNK_SIZE, 0, cz * CHUNK_SIZE);
-    mesh.frustumCulled = true;
-    return mesh;
+    return {
+        stepUntil(deadlineMs) {
+            while (nextTuft < profile.tufosPorChunk && performance.now() < deadlineMs) {
+                stepOne();
+            }
+            return nextTuft >= profile.tufosPorChunk;
+        },
+        finish() {
+            if (usePoints) {
+                const geometry = new THREE.BufferGeometry();
+                geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(positions), 3));
+                geometry.setAttribute('aDryness', new THREE.BufferAttribute(new Float32Array(dryness), 1));
+                geometry.setAttribute('aSize', new THREE.BufferAttribute(new Float32Array(sizes), 1));
+                applyBoundingSphere(geometry, profile.larguraMax);
+                return geometry;
+            }
+
+            const geometry = new THREE.InstancedBufferGeometry();
+            geometry.setAttribute('position', new THREE.BufferAttribute(shape.vertices, 3));
+            geometry.setIndex(shape.indices);
+            geometry.setAttribute('aOffset', new THREE.InstancedBufferAttribute(new Float32Array(offsets), 3));
+            geometry.setAttribute('aBlade', new THREE.InstancedBufferAttribute(new Float32Array(blades), 3));
+            geometry.setAttribute('aAngle', new THREE.InstancedBufferAttribute(new Float32Array(angles), 1));
+            geometry.setAttribute('aDryness', new THREE.InstancedBufferAttribute(new Float32Array(dryness), 1));
+            geometry.instanceCount = offsets.length / 3;
+            applyBoundingSphere(geometry, profile.alturaMax);
+            return geometry;
+        }
+    };
+}
+
+function createGrassTileBuilder(cx, cz, material, getTerrainSample, profile, isPositionBlocked, blockers) {
+    const usePoints = profile.modo === 'points';
+    const geometryBuilder = createGrassTileGeometryBuilder(cx, cz, getTerrainSample, profile, isPositionBlocked, blockers);
+
+    return {
+        stepUntil(deadlineMs) {
+            return geometryBuilder.stepUntil(deadlineMs);
+        },
+        finish() {
+            const geometry = geometryBuilder.finish();
+            const instanceCount = usePoints ? geometry.attributes.position.count : geometry.instanceCount;
+            if (instanceCount === 0) {
+                geometry.dispose();
+                return null;
+            }
+
+            const mesh = usePoints
+                ? new THREE.Points(geometry, material)
+                : new THREE.Mesh(geometry, material);
+            mesh.position.set(cx * CHUNK_SIZE, 0, cz * CHUNK_SIZE);
+            mesh.frustumCulled = true;
+            return mesh;
+        }
+    };
 }
 
 function disposeTile(mesh) {
@@ -417,6 +434,8 @@ export function createGrass(scene, getHeight, getTerrainSample, diagnostics, opt
     const emptyChunkKeys = new Set();
     const grassChunkKeys = new Set();
     const getChunkGroup = options.getChunkGroup ?? (() => null);
+    const isPositionBlocked = options.isPositionBlocked ?? (() => false);
+    const getBlockersForChunk = options.getBlockersForChunk ?? null;
     let tileBuildQueue = [];
     let lastPlayerChunkX = null;
     let lastPlayerChunkZ = null;
@@ -431,6 +450,7 @@ export function createGrass(scene, getHeight, getTerrainSample, diagnostics, opt
     let stoppedQueueTimer = 0;
     let isUsingMovingRange = false;
     let elapsed = 0;
+    let activeGrassJob = null;
 
     if (!grassConfig.ativa) {
         return {
@@ -465,6 +485,9 @@ export function createGrass(scene, getHeight, getTerrainSample, diagnostics, opt
     function rememberEmptyChunk(cx, cz) {
         const coordKey = getGrassTileCoordKey(cx, cz);
         rememberLimitedSetValue(emptyChunkKeys, coordKey, EMPTY_GRASS_CHUNK_CACHE_LIMIT);
+        if (activeGrassJob && getGrassTileCoordKey(activeGrassJob.item.cx, activeGrassJob.item.cz) === coordKey) {
+            activeGrassJob = null;
+        }
         tileBuildQueue = tileBuildQueue.filter((item) => getGrassTileCoordKey(item.cx, item.cz) !== coordKey);
         queuedTileKeys.clear();
         for (const item of tileBuildQueue) {
@@ -491,8 +514,8 @@ export function createGrass(scene, getHeight, getTerrainSample, diagnostics, opt
                 const rz = (iz + 0.5) / GRASS_TILE_PROBE_STEPS;
                 const worldX = startX + rx * CHUNK_SIZE;
                 const worldZ = startZ + rz * CHUNK_SIZE;
-                const terrainHeight = getHeight(worldX, worldZ);
                 const terrainSample = getTerrainSample(worldX, worldZ);
+                const terrainHeight = terrainSample.height;
                 if (canPlaceGrass(terrainSample, terrainHeight)) {
                     rememberGrassChunk(cx, cz);
                     return true;
@@ -524,6 +547,9 @@ export function createGrass(scene, getHeight, getTerrainSample, diagnostics, opt
     }
 
     function disposeChunk(chunk) {
+        if (activeGrassJob?.item.cx === chunk.cx && activeGrassJob?.item.cz === chunk.cz) {
+            activeGrassJob = null;
+        }
         for (const [key] of [...activeTiles]) {
             const { cx, cz } = getGrassTileCoords(key);
             if (cx !== chunk.cx || cz !== chunk.cz) continue;
@@ -736,36 +762,75 @@ export function createGrass(scene, getHeight, getTerrainSample, diagnostics, opt
         }
     }
 
-    function processTileQueue(maxBuildsOverride = null) {
+    function processTileQueue(focuses, maxBuildsOverride = null) {
         const useMovingBudget = maxBuildsOverride !== null;
         let totalBuilt = 0;
         const midConfig = grassConfig.intermediaria;
         const farConfig = grassConfig.distante;
+        const maxFinishedTiles = maxBuildsOverride ?? Infinity;
+        const deadline = performance.now() + (grassConfig.tempoGeracaoTilesMs ?? 1.5);
+        const budgets = {
+            near: grassConfig.tilesPorFrame,
+            mid: midConfig.tilesPorFrame,
+            far: useMovingBudget ? 0 : farConfig.tilesPorFrame
+        };
+        const finishedByType = { near: 0, mid: 0, far: 0 };
 
-        function buildNextTileOfType(type) {
-            const index = tileBuildQueue.findIndex((item) => item.type === type);
-            if (index === -1) return false;
-            return tileBuildQueue.splice(index, 1)[0];
-        }
-
-        function createQueuedTile(item) {
-            queuedTileKeys.delete(item.key);
+        function isItemStillWanted(item) {
+            if (!item) return false;
             if (activeTiles.has(item.key)) return false;
             if (!getChunkGroup(item.cx, item.cz)) return false;
-            removeOtherActiveTileLods(item.type, item.cx, item.cz);
+            if (emptyTileKeys.has(item.key) || emptyChunkKeys.has(getGrassTileCoordKey(item.cx, item.cz))) return false;
 
+            const { type } = getTileTypeForChunk(item.cx, item.cz, focuses);
+            return type === item.type;
+        }
+
+        function takeNextTileOfType(type) {
+            while (true) {
+                const index = tileBuildQueue.findIndex((item) => item.type === type);
+                if (index === -1) return null;
+
+                const [item] = tileBuildQueue.splice(index, 1);
+                queuedTileKeys.delete(item.key);
+                if (isItemStillWanted(item)) return item;
+            }
+        }
+
+        function takeNextTile() {
+            for (const type of ['near', 'mid', 'far']) {
+                if (finishedByType[type] >= budgets[type]) continue;
+                const item = takeNextTileOfType(type);
+                if (item) return item;
+            }
+            return null;
+        }
+
+        function createJob(item) {
             const profile = profiles[item.type];
             const material = item.type === 'near'
                 ? nearMaterial
                 : item.type === 'mid'
                     ? midMaterial
                     : farMaterial;
-            const tile = createGrassTile(item.cx, item.cz, material, getHeight, getTerrainSample, profile);
+            const blockers = getBlockersForChunk?.(item.cx, item.cz, getGrassCollisionRadius(profile)) ?? null;
+            return {
+                item,
+                builder: createGrassTileBuilder(item.cx, item.cz, material, getTerrainSample, profile, isPositionBlocked, blockers)
+            };
+        }
+
+        function finishJob(job) {
+            const { item } = job;
+            if (!isItemStillWanted(item)) return false;
+
+            const tile = job.builder.finish();
             if (!tile) {
                 rememberEmptyTile(item.key);
                 return false;
             }
 
+            removeOtherActiveTileLods(item.type, item.cx, item.cz);
             if (!attachTileToChunk(tile, item.cx, item.cz)) {
                 disposeTile(tile);
                 return false;
@@ -774,31 +839,36 @@ export function createGrass(scene, getHeight, getTerrainSample, diagnostics, opt
             return true;
         }
 
-        function processType(type, budget) {
-            let built = 0;
-            let attempts = 0;
-            const maxAttempts = Math.max(4, budget * 4);
-            while (built < budget && attempts < maxAttempts) {
-                if (maxBuildsOverride !== null && totalBuilt >= maxBuildsOverride) break;
-
-                const item = buildNextTileOfType(type);
+        while (performance.now() < deadline && totalBuilt < maxFinishedTiles) {
+            if (!activeGrassJob) {
+                const item = takeNextTile();
                 if (!item) break;
-                attempts++;
-                if (!createQueuedTile(item)) continue;
+                activeGrassJob = createJob(item);
+            }
 
-                built++;
+            const { item } = activeGrassJob;
+            if (
+                finishedByType[item.type] >= budgets[item.type]
+                || !isItemStillWanted(item)
+            ) {
+                activeGrassJob = null;
+                continue;
+            }
+
+            const isReady = activeGrassJob.builder.stepUntil(deadline);
+            if (!isReady) break;
+
+            const finishedJob = activeGrassJob;
+            activeGrassJob = null;
+            if (finishJob(finishedJob)) {
+                finishedByType[item.type]++;
                 totalBuilt++;
             }
         }
 
-        processType('near', grassConfig.tilesPorFrame);
-        processType('mid', midConfig.tilesPorFrame);
-        if (!useMovingBudget) {
-            processType('far', farConfig.tilesPorFrame);
-        }
-
         diagnostics?.setCounter('grassTiles', activeTiles.size);
         diagnostics?.setCounter('grassQueue', tileBuildQueue.length);
+        diagnostics?.setCounter('grassActiveJob', activeGrassJob ? 1 : 0);
     }
 
     function updateLightLevel() {
@@ -854,7 +924,7 @@ export function createGrass(scene, getHeight, getTerrainSample, diagnostics, opt
 
             pruneTransitionTilesOutsideRangeForFocuses(focuses);
             prioritizeTileQueueForFocuses(focuses, Math.max(currentRefreshDistance, grassConfig.distanciaMovendoChunks));
-            processTileQueue(grassConfig.tilesMovendoPorAtualizacao);
+            processTileQueue(focuses, grassConfig.tilesMovendoPorAtualizacao);
             diagnostics?.setCounter('grassPaused', 0);
             return;
         }
@@ -907,11 +977,11 @@ export function createGrass(scene, getHeight, getTerrainSample, diagnostics, opt
 
         const isRecoveringAfterMovement = stoppedTimer < (grassConfig.recuperacaoAposMovimentoMs ?? 0);
         if (isRecoveringAfterMovement) {
-            processTileQueue(grassConfig.tilesRecuperacaoParadoPorAtualizacao ?? grassConfig.tilesMovendoPorAtualizacao);
+            processTileQueue(focuses, grassConfig.tilesRecuperacaoParadoPorAtualizacao ?? grassConfig.tilesMovendoPorAtualizacao);
             return;
         }
 
-        processTileQueue();
+        processTileQueue(focuses);
     }
 
     function update(deltaSeconds, playerX, playerZ, isPlayerMoving = false) {
@@ -945,6 +1015,7 @@ export function createGrass(scene, getHeight, getTerrainSample, diagnostics, opt
         activeTiles.clear();
         tileBuildQueue = [];
         queuedTileKeys.clear();
+        activeGrassJob = null;
         nearMaterial.dispose();
         midMaterial.dispose();
         farMaterial.dispose();

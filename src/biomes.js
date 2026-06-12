@@ -69,9 +69,9 @@ function mountainsHeight(x, z) {
 }
 
 export function calculateTerrainHeight(x, z, weights) {
-    return (
-        plainsHeight(x, z) * weights.plains +
-        slopesHeight(x, z) * weights.slopes +
-        mountainsHeight(x, z) * weights.mountains
-    );
+    let height = 0;
+    if (weights.plains > 0) height += plainsHeight(x, z) * weights.plains;
+    if (weights.slopes > 0) height += slopesHeight(x, z) * weights.slopes;
+    if (weights.mountains > 0) height += mountainsHeight(x, z) * weights.mountains;
+    return height;
 }

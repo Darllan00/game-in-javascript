@@ -5,10 +5,16 @@ export const CONFIG = {
         tamanhoGrade: 50000,
         alturaOlhos: 2,
         tamanhoChunk: 32,
-        distanciaChunks: 20,
+        distanciaChunks: 40,
         distanciaPreloadChunks: 1,
         passoTerreno: 2,
         tempoGeracaoChunksMs: 3.5,
+        tempoGeracaoChunksMovendoMs: 10.0,
+        tempoGeracaoChunksMovendoFrameLentoMs: 0.35,
+        chunksGeracaoPorTrocaMovendo: 20,
+        distanciaChunksUrgentesMovendo: 8,
+        tempoMontagemFilaChunksMs: 1.2,
+        tempoMontagemFilaChunksMovendoMs: 0.35,
         lodChunks: [
             { distancia: 2, passoTerreno: 2 },
             { distancia: 6, passoTerreno: 4 },
@@ -18,7 +24,7 @@ export const CONFIG = {
         nivelDoMar: 0
     },
     movimento: {
-        velocidade: 15,
+        velocidade: 25,
         gravidade: 30,
         pulo: 50,
         alturaMaximaPasso: 1.35
@@ -41,7 +47,7 @@ export const CONFIG = {
         }
     },
     cicloDiaNoite: {
-        duracaoMinutos: 1,
+        duracaoMinutos: 20,
         atualizacoesPorSegundo: 12,
         raioAstros: 900,
         quantidadeEstrelas: 300
@@ -58,21 +64,22 @@ export const CONFIG = {
         ventoApenasParado: true,
         atualizarEnquantoMovendo: true,
         intervaloAtualizacaoMovendoMs: 800,
-        distanciaMovendoChunks: 4,
+        distanciaMovendoChunks: 10,
         recuperacaoAposMovimentoMs: 120,
         intervaloAtualizacaoParadoMs: 100,
         tilesRecuperacaoParadoPorAtualizacao: 2,
-        chunksPorAtualizacaoParado: 2,
+        chunksPorAtualizacaoParado: 4,
         tilesMovendoPorAtualizacao: 2,
         tilesRemovidosPorFrame: 24,
-        distanciaChunks: 4,
-        tufosPorChunk: 3600,
+        tempoGeracaoTilesMs: 4.5,
+        distanciaChunks: 16,
+        tufosPorChunk: 7200,
         tilesPorFrame: 1,
         segmentos: 3,
         alturaMin: 0.55,
         alturaMax: 0.75,
-        larguraMin: 0.075,
-        larguraMax: 0.395,
+        larguraMin: 0.00975,
+        larguraMax: 0.25,
         alturaMaximaTerreno: 36,
         intermediaria: {
             ativa: false,
@@ -96,6 +103,32 @@ export const CONFIG = {
             alturaMax: 1.5,
             larguraMin: 0.8,
             larguraMax: 6.0
+        }
+    },
+    arvores: {
+        ativa: true,
+        asset: 'assets/Untitled.glb',
+        distanciaChunks: 12,
+        chunksPorFrame: 2,
+        chunksPorFrameMovendo: 8,
+        chunksPorFrameParado: 8,
+        tentativasFilaPorFrame: 24,
+        tentativasPorChunk: 6,
+        maxPorChunk: 1,
+        chancePorTentativa: 1,
+        distanciaMinima: 2,
+        raioBloqueio: 1.3,
+        escalaMin: 0.85,
+        escalaMax: 1.55,
+        alturaMaximaTerreno: 34,
+        pesoMaximoMontanha: 0.36,
+        enterraNoTerreno: 0.7,
+        vento: {
+            ativo: true,
+            distanciaChunks: 1,
+            forca: 0.48,
+            velocidade: 0.9,
+            frequencia: 0.08
         }
     }
 };

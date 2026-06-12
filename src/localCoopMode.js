@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { CONFIG } from './config.js';
+import { updatePlayerPhysics } from './physics.js';
 
 const GAMEPAD_DEADZONE = 0.18;
 const MOUSE_SENSITIVITY = 0.0022;
@@ -103,48 +104,26 @@ function createCoopPlayer({ color, label, camera, startX, startZ, yaw, getHeight
 }
 
 function updateCoopPlayerPhysics(delta, player, getHeight) {
-    const position = player.group.position;
-    const oldX = position.x;
-    const oldZ = position.z;
-    const oldGround = getHeight(oldX, oldZ);
+    updatePlayerPhysics({
+        delta,
+        position: player.group.position,
+        state: player.state,
+        getHeight,
+        jump: player.input.jump,
+        applyHorizontalMovement(distance) {
+            forwardVector.set(-Math.sin(player.yaw), 0, -Math.cos(player.yaw));
+            rightVector.set(Math.cos(player.yaw), 0, -Math.sin(player.yaw));
 
-    player.state.velocidadeY -= CONFIG.movimento.gravidade * delta;
+            movementVector.set(0, 0, 0)
+                .addScaledVector(rightVector, player.input.x)
+                .addScaledVector(forwardVector, -player.input.z);
 
-    forwardVector.set(-Math.sin(player.yaw), 0, -Math.cos(player.yaw));
-    rightVector.set(Math.cos(player.yaw), 0, -Math.sin(player.yaw));
+            if (movementVector.lengthSq() > 1) movementVector.normalize();
 
-    movementVector.set(0, 0, 0)
-        .addScaledVector(rightVector, player.input.x)
-        .addScaledVector(forwardVector, -player.input.z);
-
-    if (movementVector.lengthSq() > 1) movementVector.normalize();
-
-    position.x += movementVector.x * CONFIG.movimento.velocidade * delta;
-    position.z += movementVector.z * CONFIG.movimento.velocidade * delta;
-
-    const newGround = getHeight(position.x, position.z);
-    const canStandAfterJump = position.y >= newGround + CONFIG.terreno.alturaOlhos;
-    if (newGround > oldGround + CONFIG.movimento.alturaMaximaPasso && !canStandAfterJump) {
-        position.x = oldX;
-        position.z = oldZ;
-    }
-
-    if (player.input.jump && player.state.noChao) {
-        player.state.velocidadeY = CONFIG.movimento.pulo;
-        player.state.noChao = false;
-    }
-
-    position.y += player.state.velocidadeY * delta;
-
-    const groundHeight = getHeight(position.x, position.z);
-    const eyeHeight = groundHeight + CONFIG.terreno.alturaOlhos;
-    if (position.y <= eyeHeight) {
-        position.y = eyeHeight;
-        player.state.velocidadeY = 0;
-        player.state.noChao = true;
-    } else {
-        player.state.noChao = false;
-    }
+            player.group.position.x += movementVector.x * distance;
+            player.group.position.z += movementVector.z * distance;
+        }
+    });
 }
 
 function resolvePlayerHitboxes(players, getHeight) {
@@ -338,7 +317,17 @@ export function createLocalCoopMode({ scene, camera, renderer, getHeight }) {
         };
     }
 
-    function render(grass) {
+    function setVegetationVisibilityForFocus(position, grass, trees) {
+        grass?.setVisibilityForFocus?.(position);
+        trees?.setVisibilityForFocus?.(position);
+    }
+
+    function restoreVegetationVisibility(grass, trees) {
+        grass?.restoreVisibility?.();
+        trees?.restoreVisibility?.();
+    }
+
+    function render(grass, trees) {
         const width = window.innerWidth;
         const height = window.innerHeight;
         const leftWidth = Math.floor(width / 2);
@@ -346,17 +335,17 @@ export function createLocalCoopMode({ scene, camera, renderer, getHeight }) {
 
         renderer.setScissorTest(true);
 
-        grass?.setVisibilityForFocus?.(playerOne.group.position);
+        setVegetationVisibilityForFocus(playerOne.group.position, grass, trees);
         renderer.setViewport(0, 0, leftWidth, height);
         renderer.setScissor(0, 0, leftWidth, height);
         renderer.render(scene, playerOne.camera);
 
-        grass?.setVisibilityForFocus?.(playerTwo.group.position);
+        setVegetationVisibilityForFocus(playerTwo.group.position, grass, trees);
         renderer.setViewport(leftWidth, 0, rightWidth, height);
         renderer.setScissor(leftWidth, 0, rightWidth, height);
         renderer.render(scene, playerTwo.camera);
 
-        grass?.restoreVisibility?.();
+        restoreVegetationVisibility(grass, trees);
         renderer.setScissorTest(false);
     }
 

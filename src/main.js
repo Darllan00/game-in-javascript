@@ -5,6 +5,7 @@ import { buildSeedUrl, createRandomSeedText, resolveWorldSeed } from './seed.js'
 import { createPerformanceDiagnostics } from './performanceDiagnostics.js';
 import { createDayNightCycle } from './dayNightCycle.js';
 import { createGrass } from './grass.js';
+import { createTrees } from './trees.js';
 import { CONFIG } from './config.js';
 import { GAME_MODE, buildModeUrl, getGameMode } from './gameModes.js';
 import { createSinglePlayerMode } from './singlePlayerMode.js';
@@ -17,9 +18,17 @@ const diagnostics = createPerformanceDiagnostics(renderer);
 const dayNightCycle = createDayNightCycle(scene, camera);
 const terrain = createTerrain(scene, diagnostics);
 const { getHeight, getSample, getChunkGroup, setChunkLifecycle, updateChunksForPlayers, dispose } = terrain;
-const grass = createGrass(scene, getHeight, getSample, diagnostics, { getChunkGroup });
+const trees = createTrees(scene, getSample, diagnostics, { getChunkGroup });
+const grass = createGrass(scene, getHeight, getSample, diagnostics, {
+    getChunkGroup,
+    isPositionBlocked: trees.isPositionBlocked,
+    getBlockersForChunk: trees.getBlockersForChunk
+});
 setChunkLifecycle({
-    onChunkDisposed: grass.disposeChunk
+    onChunkDisposed(chunk) {
+        grass.disposeChunk(chunk);
+        trees.disposeChunk(chunk);
+    }
 });
 const gameMode = getGameMode();
 const mode = gameMode === GAME_MODE.LOCAL_COOP
@@ -103,9 +112,10 @@ function loop() {
     if (modeState.isActive) {
         updateChunksForPlayers(modeState.focuses, modeState.isMoving);
     }
+    trees.updateForPlayers(delta, modeState.focuses, modeState.isActive && modeState.isMoving);
     grass.updateForPlayers(delta, modeState.focuses, modeState.isActive && modeState.isMoving);
 
-    mode.render(grass);
+    mode.render(grass, trees);
 }
 
 loop();
@@ -118,6 +128,7 @@ window.addEventListener('resize', () => {
 window.addEventListener('beforeunload', () => {
     dayNightCycle.dispose();
     grass.dispose();
+    trees.dispose();
     mode.dispose();
     dispose();
 });
