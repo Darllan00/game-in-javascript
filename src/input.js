@@ -8,15 +8,28 @@ export const keys = {
     space: false
 };
 
-export function setupControls(camera) {
+export function setupControls(camera, options = {}) {
     const controls = new PointerLockControls(camera, document.body);
     const player = controls.getObject();
 
     const menu = document.getElementById('menu');
+    let isStarting = false;
+
+    async function requestStart() {
+        if (isStarting || controls.isLocked) return;
+        isStarting = true;
+        try {
+            const startResult = options.requestStart?.(player);
+            if (startResult) await startResult;
+            controls.lock();
+        } finally {
+            isStarting = false;
+        }
+    }
 
     menu.addEventListener('click', (event) => {
         if (event.target instanceof Element && event.target.closest('[data-menu-control], button, input, textarea, select')) return;
-        controls.lock();
+        requestStart();
     });
 
     controls.addEventListener('lock', () => {

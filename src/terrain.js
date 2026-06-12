@@ -12,6 +12,7 @@ import { buildChunkGroup, getChunkBounds, getChunkKey } from './chunks.js';
 import { createSuperChunkTerrainMaterial, createTerrainMaterial } from './materials.js';
 import { createChunkTerrainGeometry } from './terrainMesh.js';
 import { createChunkSampleGrid, createChunkSampleGridBuilder } from './chunkSampleGrid.js';
+import { canPlaceGrassOnSample } from './vegetationRules.js';
 
 const CHUNK_SIZE = CONFIG.terreno.tamanhoChunk;
 const VIEW_DISTANCE = CONFIG.terreno.distanciaChunks;
@@ -31,13 +32,28 @@ const SUPER_CHUNK_SIZE_IN_CHUNKS = 8;
 const SUPER_CHUNK_TERRAIN_STEP = 16;
 const SUPER_CHUNK_VERTICAL_OFFSET = 0;
 const LOD_UPGRADE_MARGIN_CHUNKS = 1;
+const SUPER_CHUNK_MOVING_TRANSITION_BUFFER_CHUNKS = CONFIG.terreno.bufferTransicaoChunksMovendo
+    ?? CONFIG.terreno.distanciaTransicaoSuperChunkMovendoChunks
+    ?? 2;
 const SUPER_CHUNK_MASK_FOCUSES = 2;
 const SUPER_CHUNK_PRIORITY_OFFSET = 4;
 const TERRAIN_SAMPLE_CACHE_LIMIT = 65536;
 const RETIRED_CHUNK_CACHE_LIMIT = 160;
+const GRASS_CHUNK_PROBE_STEPS = 4;
+const MACRO_CHUNK_CONFIG = CONFIG.terreno.macroSuperChunks ?? {};
+const MACRO_CHUNKS_ENABLED = MACRO_CHUNK_CONFIG.ativo !== false;
+const MACRO_CHUNK_SIZE_IN_CHUNKS = Math.max(1, MACRO_CHUNK_CONFIG.tamanhoEmChunks ?? 128);
+const MACRO_CHUNK_WORLD_SIZE = MACRO_CHUNK_SIZE_IN_CHUNKS * CHUNK_SIZE;
+const MACRO_CHUNK_TERRAIN_STEP = Math.max(CHUNK_SIZE, MACRO_CHUNK_CONFIG.passoTerreno ?? CHUNK_SIZE * 16);
+const MACRO_CHUNK_HIDE_DISTANCE = MACRO_CHUNK_CONFIG.esconderAteDistanciaChunks ?? VIEW_DISTANCE;
+const MACRO_CHUNK_VERTICAL_OFFSET = MACRO_CHUNK_CONFIG.deslocamentoVertical ?? 0;
+const MACRO_CHUNK_GENERATION_BUDGET_MS = MACRO_CHUNK_CONFIG.tempoGeracaoMs ?? 8;
 
 const WORLD_MIN = -CONFIG.terreno.tamanhoGrade / 2;
 const WORLD_MAX = CONFIG.terreno.tamanhoGrade / 2;
+const MACRO_CHUNK_COLUMNS = Math.ceil((WORLD_MAX - WORLD_MIN) / MACRO_CHUNK_WORLD_SIZE);
+const MACRO_CHUNK_ROWS = MACRO_CHUNK_COLUMNS;
+const MACRO_CHUNK_TOTAL = MACRO_CHUNKS_ENABLED ? MACRO_CHUNK_COLUMNS * MACRO_CHUNK_ROWS : 0;
 
 function getIndividualChunkDistance() {
     const finiteLods = CONFIG.terreno.lodChunks
@@ -49,6 +65,7 @@ function getIndividualChunkDistance() {
 
 const INDIVIDUAL_CHUNK_DISTANCE = getIndividualChunkDistance();
 const INDIVIDUAL_PREFETCH_DISTANCE = INDIVIDUAL_CHUNK_DISTANCE + CONFIG.terreno.distanciaPreloadChunks;
+const SUPER_CHUNK_MASK_DISTANCE = INDIVIDUAL_PREFETCH_DISTANCE + SUPER_CHUNK_MOVING_TRANSITION_BUFFER_CHUNKS;
 
 export function setTerrainSeed(numericSeed) {
     setNoiseSeed(numericSeed);
@@ -145,12 +162,18 @@ export function createTerrain(scene, diagnostics) {
     const terrainMaterial = createTerrainMaterial();
     const superChunkTerrainMaterial = createSuperChunkTerrainMaterial({
         chunkSize: CHUNK_SIZE,
-        maskDistance: INDIVIDUAL_PREFETCH_DISTANCE,
+        maskDistance: SUPER_CHUNK_MASK_DISTANCE,
+        maxFocuses: SUPER_CHUNK_MASK_FOCUSES
+    });
+    const macroChunkTerrainMaterial = createSuperChunkTerrainMaterial({
+        chunkSize: CHUNK_SIZE,
+        maskDistance: MACRO_CHUNK_HIDE_DISTANCE,
         maxFocuses: SUPER_CHUNK_MASK_FOCUSES
     });
 
     const chunks = new Map();
     const superChunks = new Map();
+    const macroChunks = new Map();
     const retiredChunks = new Map();
     const sharedSampleCache = createTerrainSampleCache(TERRAIN_SAMPLE_CACHE_LIMIT);
     let chunkLifecycle = null;
@@ -166,6 +189,16 @@ export function createTerrain(scene, diagnostics) {
     let queueBuildJob = null;
     let lastChunkUpdateTime = performance.now();
     let movingChunkGenerationCredits = 0;
+    let superChunkMaskDirty = true;
+    let superChunkMaskFocusSignature = '';
+    let macroChunkQueue = [];
+    let macroChunkQueueReady = false;
+    let activeMacroChunkJob = null;
+    let chunkTransitionBufferChunks = 0;
+
+    function getIndividualChunkDistanceLimit() {
+        return INDIVIDUAL_PREFETCH_DISTANCE + chunkTransitionBufferChunks;
+    }
 
     function getChunkDistance(cx, cz, playerChunkX = null, playerChunkZ = null) {
         if (playerChunkX !== null && playerChunkZ !== null) {
@@ -185,12 +218,12 @@ export function createTerrain(scene, diagnostics) {
     }
 
     function isChunkVisible(cx, cz, playerChunkX = null, playerChunkZ = null) {
-        return getChunkDistance(cx, cz, playerChunkX, playerChunkZ) <= INDIVIDUAL_PREFETCH_DISTANCE;
+        return getChunkDistance(cx, cz, playerChunkX, playerChunkZ) <= getIndividualChunkDistanceLimit();
     }
 
     function isChunkNeeded(cx, cz, playerChunkX = null, playerChunkZ = null) {
         if ((playerChunkX === null || playerChunkZ === null) && !lastChunkFocuses.length) return false;
-        return getChunkDistance(cx, cz, playerChunkX, playerChunkZ) <= INDIVIDUAL_PREFETCH_DISTANCE;
+        return getChunkDistance(cx, cz, playerChunkX, playerChunkZ) <= getIndividualChunkDistanceLimit();
     }
 
     function hasChunkArea(cx, cz) {
@@ -262,6 +295,66 @@ export function createTerrain(scene, diagnostics) {
             || hasChunkArea(maxCx, minCz)
             || hasChunkArea(minCx, maxCz)
             || hasChunkArea(maxCx, maxCz);
+    }
+
+    function getMacroChunkKey(mx, mz) {
+        return `m:${mx},${mz}`;
+    }
+
+    function getMacroChunkBounds(mx, mz) {
+        const startX = WORLD_MIN + mx * MACRO_CHUNK_WORLD_SIZE;
+        const startZ = WORLD_MIN + mz * MACRO_CHUNK_WORLD_SIZE;
+        return {
+            startX,
+            startZ,
+            endX: Math.min(WORLD_MAX, startX + MACRO_CHUNK_WORLD_SIZE),
+            endZ: Math.min(WORLD_MAX, startZ + MACRO_CHUNK_WORLD_SIZE)
+        };
+    }
+
+    function getMacroChunkPriority(item, focuses) {
+        if (!focuses?.length) return item.mz * MACRO_CHUNK_COLUMNS + item.mx;
+
+        const centerChunkX = Math.floor(((item.startX + item.endX) * 0.5) / CHUNK_SIZE);
+        const centerChunkZ = Math.floor(((item.startZ + item.endZ) * 0.5) / CHUNK_SIZE);
+        let closestDistance = Infinity;
+        for (const focus of focuses) {
+            closestDistance = Math.min(
+                closestDistance,
+                Math.max(Math.abs(centerChunkX - focus.chunkX), Math.abs(centerChunkZ - focus.chunkZ))
+            );
+        }
+        return closestDistance;
+    }
+
+    function ensureMacroChunkQueue(focuses = lastChunkFocuses) {
+        if (!MACRO_CHUNKS_ENABLED || macroChunkQueueReady) return;
+
+        const queue = [];
+        for (let mz = 0; mz < MACRO_CHUNK_ROWS; mz++) {
+            for (let mx = 0; mx < MACRO_CHUNK_COLUMNS; mx++) {
+                const key = getMacroChunkKey(mx, mz);
+                if (macroChunks.has(key)) continue;
+                const bounds = getMacroChunkBounds(mx, mz);
+                if (bounds.startX >= bounds.endX || bounds.startZ >= bounds.endZ) continue;
+                queue.push({ mx, mz, key, ...bounds });
+            }
+        }
+
+        macroChunkQueue = queue.sort((a, b) => getMacroChunkPriority(a, focuses) - getMacroChunkPriority(b, focuses));
+        macroChunkQueueReady = true;
+        diagnostics.setCounter('macroChunkQueue', macroChunkQueue.length);
+        diagnostics.setCounter('macroChunkTotal', MACRO_CHUNK_TOTAL);
+    }
+
+    function updateMacroChunkMaskFocuses(focuses) {
+        if (!MACRO_CHUNKS_ENABLED) return;
+
+        const maskedFocuses = focuses.slice(0, SUPER_CHUNK_MASK_FOCUSES).map((focus) => ({
+            ...focus,
+            maskDistance: MACRO_CHUNK_HIDE_DISTANCE
+        }));
+        macroChunkTerrainMaterial.userData.setMaskFocuses?.(maskedFocuses);
     }
 
     function getTerrainStepForDistance(distance) {
@@ -361,7 +454,9 @@ export function createTerrain(scene, diagnostics) {
 
         let visibleChunks = 0;
         for (const chunk of chunks.values()) {
+            const wasVisible = chunk.group.visible;
             chunk.group.visible = isChunkVisible(chunk.cx, chunk.cz);
+            if (wasVisible !== chunk.group.visible) markSuperChunkMaskDirty();
             if (chunk.group.visible) visibleChunks++;
             if (isChunkNeeded(chunk.cx, chunk.cz)) {
                 enqueueChunk(chunk.cx, chunk.cz);
@@ -509,7 +604,7 @@ export function createTerrain(scene, diagnostics) {
 
             if (hasChunkArea(cx, cz)) {
                 enqueueSuperChunkForChunk(cx, cz);
-                if (queueBuildJob.ring <= INDIVIDUAL_PREFETCH_DISTANCE) {
+                if (queueBuildJob.ring <= getIndividualChunkDistanceLimit()) {
                     enqueueChunk(cx, cz);
                 }
             }
@@ -531,7 +626,7 @@ export function createTerrain(scene, diagnostics) {
     }
 
     function enqueueUrgentMovingChunks(focuses) {
-        const maxDistance = Math.min(MOVING_URGENT_CHUNK_DISTANCE, INDIVIDUAL_PREFETCH_DISTANCE);
+        const maxDistance = Math.min(MOVING_URGENT_CHUNK_DISTANCE, getIndividualChunkDistanceLimit());
         for (const focus of focuses) {
             for (let dz = -maxDistance; dz <= maxDistance; dz++) {
                 for (let dx = -maxDistance; dx <= maxDistance; dx++) {
@@ -702,7 +797,122 @@ export function createTerrain(scene, diagnostics) {
         return createSuperChunkFromHeightMap(sx, sz, startX, startZ, endX, endZ, heightMap);
     }
 
-    function createChunkTerrainVariant(terrainStep, startX, startZ, endX, endZ, heightMap) {
+    function startNextMacroChunkJob(focuses = lastChunkFocuses) {
+        if (!MACRO_CHUNKS_ENABLED) return null;
+
+        ensureMacroChunkQueue(focuses);
+        while (macroChunkQueue.length > 0) {
+            const next = macroChunkQueue.shift();
+            if (!next || macroChunks.has(next.key)) continue;
+
+            const baseSampleTerrain = createChunkSampler(
+                sharedSampleCache,
+                null,
+                createTerrainHeightSample,
+                'macro'
+            );
+            diagnostics.setCounter('macroChunkQueue', macroChunkQueue.length);
+            return {
+                ...next,
+                sampleGridBuilder: createChunkSampleGridBuilder(
+                    next.startX,
+                    next.startZ,
+                    next.endX,
+                    next.endZ,
+                    MACRO_CHUNK_TERRAIN_STEP,
+                    baseSampleTerrain
+                )
+            };
+        }
+
+        diagnostics.setCounter('macroChunkQueue', macroChunkQueue.length);
+        return null;
+    }
+
+    function createMacroChunkFromHeightMap(job, heightMap) {
+        if (macroChunks.has(job.key)) return macroChunks.get(job.key);
+
+        const sampleTerrain = createChunkSampler(sharedSampleCache, heightMap, createTerrainHeightSample, 'macro');
+        const { geometry, width, depth } = diagnostics.measure(
+            'macroChunkGeometry',
+            () => createChunkTerrainGeometry(job.startX, job.startZ, job.endX, job.endZ, sampleTerrain, MACRO_CHUNK_TERRAIN_STEP)
+        );
+        const terrainMesh = new THREE.Mesh(geometry, macroChunkTerrainMaterial);
+        terrainMesh.position.set(
+            job.startX + width / 2,
+            MACRO_CHUNK_VERTICAL_OFFSET,
+            job.startZ + depth / 2
+        );
+
+        const group = buildChunkGroup(terrainMesh);
+        group.name = `macro-terrain-${job.mx},${job.mz}`;
+        scene.add(group);
+
+        const macroChunk = {
+            key: job.key,
+            mx: job.mx,
+            mz: job.mz,
+            group
+        };
+        macroChunks.set(job.key, macroChunk);
+        diagnostics.setCounter('loadedMacroChunks', macroChunks.size);
+        diagnostics.setCounter('macroChunkProgress', getMacroWorldProgress());
+        return macroChunk;
+    }
+
+    function processMacroWorld(deadlineMs, focuses = lastChunkFocuses) {
+        if (!MACRO_CHUNKS_ENABLED) return true;
+
+        ensureMacroChunkQueue(focuses);
+        while (performance.now() < deadlineMs) {
+            if (!activeMacroChunkJob) {
+                activeMacroChunkJob = startNextMacroChunkJob(focuses);
+                if (!activeMacroChunkJob) break;
+            }
+
+            const isReady = diagnostics.measure(
+                'macroChunkSampleGrid',
+                () => activeMacroChunkJob.sampleGridBuilder.stepUntil(deadlineMs)
+            );
+            if (!isReady) break;
+
+            const finishedJob = activeMacroChunkJob;
+            activeMacroChunkJob = null;
+            const heightMap = finishedJob.sampleGridBuilder.finish();
+            createMacroChunkFromHeightMap(finishedJob, heightMap);
+        }
+
+        diagnostics.setCounter('macroChunkQueue', macroChunkQueue.length);
+        diagnostics.setCounter('loadedMacroChunks', macroChunks.size);
+        diagnostics.setCounter('macroChunkProgress', getMacroWorldProgress());
+        return isMacroWorldReady();
+    }
+
+    function createChunkGrassMetadata(cx, cz, heightMap) {
+        const startX = cx * CHUNK_SIZE;
+        const startZ = cz * CHUNK_SIZE;
+
+        for (let ix = 0; ix < GRASS_CHUNK_PROBE_STEPS; ix++) {
+            const rx = (ix + 0.5) / GRASS_CHUNK_PROBE_STEPS;
+            for (let iz = 0; iz < GRASS_CHUNK_PROBE_STEPS; iz++) {
+                const rz = (iz + 0.5) / GRASS_CHUNK_PROBE_STEPS;
+                const x = startX + rx * CHUNK_SIZE;
+                const z = startZ + rz * CHUNK_SIZE;
+                const sample = heightMap.sampleTerrainBilinear?.(x, z) ?? createTerrainSample(x, z);
+                if (canPlaceGrassOnSample(sample)) {
+                    return { canContainGrass: true };
+                }
+            }
+        }
+
+        return { canContainGrass: false };
+    }
+
+    function markSuperChunkMaskDirty() {
+        superChunkMaskDirty = true;
+    }
+
+    function createChunkTerrainVariant(cx, cz, terrainStep, startX, startZ, endX, endZ, heightMap) {
         const sampleTerrain = createChunkSampler(sharedSampleCache, heightMap);
         const { geometry, width, depth } = diagnostics.measure(
             'terrainGeometry',
@@ -714,7 +924,8 @@ export function createTerrain(scene, diagnostics) {
         return {
             terrainStep,
             mesh: terrainMesh,
-            sampleGrid: heightMap
+            sampleGrid: heightMap,
+            grassMetadata: createChunkGrassMetadata(cx, cz, heightMap)
         };
     }
 
@@ -730,13 +941,15 @@ export function createTerrain(scene, diagnostics) {
         chunk.activeTerrainStep = terrainStep;
         chunk.terrainStep = terrainStep;
         chunk.sampleGrid = variant.sampleGrid;
+        chunk.grassMetadata = variant.grassMetadata;
+        markSuperChunkMaskDirty();
         return true;
     }
 
     function createChunkFromHeightMap(cx, cz, terrainStep, startX, startZ, endX, endZ, heightMap) {
         const key = getChunkKey(cx, cz);
         let chunk = chunks.get(key);
-        const variant = createChunkTerrainVariant(terrainStep, startX, startZ, endX, endZ, heightMap);
+        const variant = createChunkTerrainVariant(cx, cz, terrainStep, startX, startZ, endX, endZ, heightMap);
 
         if (chunk) {
             if (!chunk.variants.has(terrainStep)) {
@@ -754,6 +967,7 @@ export function createTerrain(scene, diagnostics) {
                 setActiveChunkVariant(chunk, terrainStep);
             }
             chunk.group.visible = isChunkVisible(cx, cz);
+            markSuperChunkMaskDirty();
             return chunk;
         }
 
@@ -776,6 +990,7 @@ export function createTerrain(scene, diagnostics) {
         chunks.set(key, chunk);
         diagnostics.setCounter('loadedChunks', chunks.size);
         diagnostics.setCounter('visibleChunks', [...chunks.values()].filter((item) => item.group.visible).length);
+        markSuperChunkMaskDirty();
         return chunk;
     }
 
@@ -831,6 +1046,7 @@ export function createTerrain(scene, diagnostics) {
         chunk.group.clear();
         chunks.delete(key);
         diagnostics.setCounter('loadedChunks', chunks.size);
+        markSuperChunkMaskDirty();
     }
 
     function unloadSuperChunk(key) {
@@ -848,6 +1064,20 @@ export function createTerrain(scene, diagnostics) {
         diagnostics.setCounter('visibleSuperChunks', [...superChunks.values()].filter((item) => item.group.visible).length);
     }
 
+    function unloadMacroChunk(key) {
+        const macroChunk = macroChunks.get(key);
+        if (!macroChunk) return;
+
+        macroChunk.group.userData.disposed = true;
+        scene.remove(macroChunk.group);
+        macroChunk.group.traverse((object) => {
+            if (object.geometry) object.geometry.dispose();
+        });
+        macroChunk.group.clear();
+        macroChunks.delete(key);
+        diagnostics.setCounter('loadedMacroChunks', macroChunks.size);
+    }
+
     function restoreRetiredChunk(key) {
         const chunk = retiredChunks.get(key);
         if (!chunk) return false;
@@ -859,6 +1089,7 @@ export function createTerrain(scene, diagnostics) {
         diagnostics.setCounter('loadedChunks', chunks.size);
         diagnostics.setCounter('visibleChunks', [...chunks.values()].filter((item) => item.group.visible).length);
         diagnostics.setCounter('retiredChunks', retiredChunks.size);
+        markSuperChunkMaskDirty();
         return true;
     }
 
@@ -872,6 +1103,7 @@ export function createTerrain(scene, diagnostics) {
         retiredChunks.set(key, chunk);
         diagnostics.setCounter('loadedChunks', chunks.size);
         diagnostics.setCounter('retiredChunks', retiredChunks.size);
+        markSuperChunkMaskDirty();
 
         while (retiredChunks.size > RETIRED_CHUNK_CACHE_LIMIT) {
             const oldestKey = retiredChunks.keys().next().value;
@@ -892,6 +1124,7 @@ export function createTerrain(scene, diagnostics) {
         chunk.group.clear();
         retiredChunks.delete(key);
         diagnostics.setCounter('retiredChunks', retiredChunks.size);
+        markSuperChunkMaskDirty();
     }
 
     function dispose() {
@@ -901,12 +1134,16 @@ export function createTerrain(scene, diagnostics) {
         for (const key of [...superChunks.keys()]) {
             unloadSuperChunk(key);
         }
+        for (const key of [...macroChunks.keys()]) {
+            unloadMacroChunk(key);
+        }
         for (const key of [...retiredChunks.keys()]) {
             disposeRetiredChunk(key);
         }
         sharedSampleCache.clear();
         terrainMaterial.dispose();
         superChunkTerrainMaterial.dispose();
+        macroChunkTerrainMaterial.dispose();
     }
 
     function createChunkFocuses(positions) {
@@ -937,7 +1174,7 @@ export function createTerrain(scene, diagnostics) {
 
     function getSafeSuperChunkMaskDistanceForFocus(focus) {
         let safeDistance = -1;
-        for (let distance = 0; distance <= INDIVIDUAL_PREFETCH_DISTANCE; distance++) {
+        for (let distance = 0; distance <= getIndividualChunkDistanceLimit(); distance++) {
             let hasCompleteRing = true;
             for (let dx = -distance; dx <= distance && hasCompleteRing; dx++) {
                 for (let dz = -distance; dz <= distance; dz++) {
@@ -961,14 +1198,24 @@ export function createTerrain(scene, diagnostics) {
         superChunkTerrainMaterial.userData.setMaskFocuses?.(maskedFocuses);
     }
 
+    function maybeUpdateSuperChunkMaskFocuses(focuses, focusSignature) {
+        if (!superChunkMaskDirty && superChunkMaskFocusSignature === focusSignature) return;
+
+        updateSuperChunkMaskFocuses(focuses);
+        superChunkMaskDirty = false;
+        superChunkMaskFocusSignature = focusSignature;
+        diagnostics.increment('superChunkMaskUpdates');
+    }
+
     function updateChunksForPlayers(playerPositions, isPlayerMoving = false) {
         const now = performance.now();
         const previousFrameMs = now - lastChunkUpdateTime;
         lastChunkUpdateTime = now;
+        chunkTransitionBufferChunks = isPlayerMoving ? SUPER_CHUNK_MOVING_TRANSITION_BUFFER_CHUNKS : 0;
 
         const focuses = createChunkFocuses(playerPositions);
         if (!focuses.length) return;
-        updateSuperChunkMaskFocuses(focuses);
+        updateMacroChunkMaskFocuses(focuses);
 
         const focusSignature = getFocusSignature(focuses);
         const didChangeChunk = focusSignature !== lastFocusSignature;
@@ -979,6 +1226,7 @@ export function createTerrain(scene, diagnostics) {
             lastPlayerChunkX = focuses[0].chunkX;
             lastPlayerChunkZ = focuses[0].chunkZ;
             refreshChunkQueue();
+            markSuperChunkMaskDirty();
             if (isPlayerMoving) {
                 enqueueUrgentMovingChunks(focuses);
                 movingChunkGenerationCredits = MOVING_CHUNK_CHANGE_GENERATION_CREDITS;
@@ -986,22 +1234,32 @@ export function createTerrain(scene, diagnostics) {
         }
 
         if (isPlayerMoving && !didChangeChunk) {
-            if (!activeChunkJob && movingChunkGenerationCredits <= 0) return;
+            if (!activeChunkJob && movingChunkGenerationCredits <= 0) {
+                maybeUpdateSuperChunkMaskFocuses(focuses, focusSignature);
+                return;
+            }
             const movingBudget = previousFrameMs > SLOW_FRAME_GENERATION_PAUSE_MS
                 ? CHUNK_MOVING_SLOW_FRAME_BUDGET_MS
                 : CHUNK_MOVING_GENERATION_BUDGET_MS;
-            if (movingBudget <= 0) return;
+            if (movingBudget <= 0) {
+                maybeUpdateSuperChunkMaskFocuses(focuses, focusSignature);
+                return;
+            }
             const finishedItems = processChunkQueue(movingBudget, 0, {
                 allowStartingNewJob: movingChunkGenerationCredits > 0,
                 maxFinishedItems: Math.max(1, movingChunkGenerationCredits)
             });
             movingChunkGenerationCredits = Math.max(0, movingChunkGenerationCredits - finishedItems);
+            maybeUpdateSuperChunkMaskFocuses(focuses, focusSignature);
             return;
         }
 
         if (didInitialChunkBurst) {
             const useMovingBudget = isPlayerMoving && didChangeChunk;
-            if (previousFrameMs > SLOW_FRAME_GENERATION_PAUSE_MS && !useMovingBudget) return;
+            if (previousFrameMs > SLOW_FRAME_GENERATION_PAUSE_MS && !useMovingBudget) {
+                maybeUpdateSuperChunkMaskFocuses(focuses, focusSignature);
+                return;
+            }
             const frameLimitedMovingBudget = previousFrameMs > SLOW_FRAME_GENERATION_PAUSE_MS
                 ? CHUNK_MOVING_SLOW_FRAME_BUDGET_MS
                 : CHUNK_MOVING_GENERATION_BUDGET_MS;
@@ -1023,6 +1281,8 @@ export function createTerrain(scene, diagnostics) {
             processInitialChunkBurst();
             didInitialChunkBurst = true;
         }
+
+        maybeUpdateSuperChunkMaskFocuses(focuses, focusSignature);
     }
 
     function updateChunks(playerX, playerZ, isPlayerMoving = false) {
@@ -1057,11 +1317,52 @@ export function createTerrain(scene, diagnostics) {
             ?? null;
     }
 
+    function getChunkVegetationMetadata(cx, cz) {
+        return chunks.get(getChunkKey(cx, cz))?.grassMetadata
+            ?? retiredChunks.get(getChunkKey(cx, cz))?.grassMetadata
+            ?? null;
+    }
+
+    function getMacroWorldProgress() {
+        if (!MACRO_CHUNKS_ENABLED || MACRO_CHUNK_TOTAL <= 0) return 1;
+        const loaded = macroChunks.size + (activeMacroChunkJob ? 0.35 : 0);
+        return Math.min(1, loaded / MACRO_CHUNK_TOTAL);
+    }
+
+    function isMacroWorldReady() {
+        if (!MACRO_CHUNKS_ENABLED) return true;
+        return macroChunks.size >= MACRO_CHUNK_TOTAL
+            && macroChunkQueueReady
+            && macroChunkQueue.length === 0
+            && !activeMacroChunkJob;
+    }
+
+    function preloadMacroWorldStep(deadlineMs = performance.now() + MACRO_CHUNK_GENERATION_BUDGET_MS, playerPositions = []) {
+        const focuses = playerPositions.length ? createChunkFocuses(playerPositions) : lastChunkFocuses;
+        if (focuses.length) {
+            updateMacroChunkMaskFocuses(focuses);
+        }
+        return processMacroWorld(deadlineMs, focuses);
+    }
+
     function setChunkLifecycle(lifecycle) {
         chunkLifecycle = lifecycle;
     }
 
     updateChunks(0, 0);
 
-    return { getHeight, getSample, getWorldSample, getChunkGroup, setChunkLifecycle, updateChunks, updateChunksForPlayers, dispose };
+    return {
+        getHeight,
+        getSample,
+        getWorldSample,
+        getChunkGroup,
+        getChunkVegetationMetadata,
+        getMacroWorldProgress,
+        isMacroWorldReady,
+        preloadMacroWorldStep,
+        setChunkLifecycle,
+        updateChunks,
+        updateChunksForPlayers,
+        dispose
+    };
 }

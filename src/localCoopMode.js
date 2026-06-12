@@ -194,7 +194,7 @@ function updateGamepadInput(player, gamepad) {
     player.input.jump = isGamepadJumping(gamepad);
 }
 
-export function createLocalCoopMode({ scene, camera, renderer, getHeight }) {
+export function createLocalCoopMode({ scene, camera, renderer, getHeight, requestStart }) {
     const keyboard = createKeyState();
     const playerOne = createCoopPlayer({
         color: 0x2f7dff,
@@ -216,6 +216,7 @@ export function createLocalCoopMode({ scene, camera, renderer, getHeight }) {
     });
     const players = [playerOne, playerTwo];
     let isStarted = false;
+    let isStarting = false;
 
     playerOne.body.layers.set(PLAYER_ONE_BODY_LAYER);
     playerTwo.body.layers.set(PLAYER_TWO_BODY_LAYER);
@@ -240,10 +241,18 @@ export function createLocalCoopMode({ scene, camera, renderer, getHeight }) {
         document.body.appendChild(item);
     });
 
-    function start() {
-        isStarted = true;
-        if (menu) menu.style.display = 'none';
-        document.body.requestPointerLock?.();
+    async function start() {
+        if (isStarted || isStarting) return;
+        isStarting = true;
+        try {
+            const startResult = requestStart?.(playerOne.group.position);
+            if (startResult) await startResult;
+            isStarted = true;
+            if (menu) menu.style.display = 'none';
+            document.body.requestPointerLock?.();
+        } finally {
+            isStarting = false;
+        }
     }
 
     menu?.addEventListener('click', (event) => {

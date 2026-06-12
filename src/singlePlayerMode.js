@@ -2,8 +2,8 @@ import { setupControls, keys } from './input.js';
 import { state } from './state.js';
 import { updatePhysics } from './physics.js';
 
-export function createSinglePlayerMode({ scene, camera, renderer, getHeight }) {
-    const { controls, player } = setupControls(camera);
+export function createSinglePlayerMode({ scene, camera, renderer, getHeight, requestStart }) {
+    const { controls, player } = setupControls(camera, { requestStart });
     scene.add(player);
 
     function update(delta) {
@@ -48,4 +48,3 @@ export function createSinglePlayerMode({ scene, camera, renderer, getHeight }) {
         }
     };
 }
-

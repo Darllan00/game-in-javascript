@@ -9,12 +9,14 @@ const WORLD_MIN = -CONFIG.terreno.tamanhoGrade / 2;
 const WORLD_MAX = CONFIG.terreno.tamanhoGrade / 2;
 const TREE_PLACEMENT_CACHE_LIMIT = 8192;
 const EMPTY_TREE_CHUNK_CACHE_LIMIT = 8192;
+const EMPTY_TREE_LOD_CACHE_LIMIT = 2048;
 const tempMatrix = new THREE.Matrix4();
 const tempNormalizingMatrix = new THREE.Matrix4();
 const tempPosition = new THREE.Vector3();
 const tempScale = new THREE.Vector3();
 const tempQuaternion = new THREE.Quaternion();
 const tempEuler = new THREE.Euler(0, 0, 0, 'YXZ');
+const hiddenLodMatrix = new THREE.Matrix4().makeScale(0, 0, 0);
 const assetBounds = new THREE.Box3();
 const treeWindDirection = new THREE.Vector2(CONFIG.vento.direcaoX, CONFIG.vento.direcaoZ).normalize();
 
@@ -40,8 +42,28 @@ function getTreeConfig() {
     return CONFIG.arvores ?? {};
 }
 
+function getTreeLodConfig() {
+    return getTreeConfig().lod ?? {};
+}
+
 function getTreeDistance() {
     return Math.max(0, getTreeConfig().distanciaChunks ?? 0);
+}
+
+function getTreeLodDistance() {
+    return Math.max(getTreeDistance(), getTreeLodConfig().distanciaChunks ?? CONFIG.terreno.distanciaChunks);
+}
+
+function getTreeLodHideDistance() {
+    return getTreeLodConfig().esconderAteDistanciaChunks ?? getTreeDistance();
+}
+
+function getTreeLodSuperChunkSize() {
+    return Math.max(1, getTreeLodConfig().tamanhoSuperChunk ?? 8);
+}
+
+function getAssetUrl(path) {
+    return encodeURI(path);
 }
 
 function rememberLimitedMapValue(map, key, value, limit) {
@@ -164,7 +186,8 @@ function prepareGeometry(sourceGeometry, worldMatrix, normalizingMatrix) {
     return geometry;
 }
 
-function prepareTreeAsset(root) {
+function prepareTreeAsset(root, options = {}) {
+    const animated = options.animated ?? true;
     root.updateMatrixWorld(true);
     assetBounds.setFromObject(root);
     const center = assetBounds.getCenter(new THREE.Vector3());
@@ -211,8 +234,8 @@ function prepareTreeAsset(root) {
 
         geometry.computeBoundingBox();
         geometry.computeBoundingSphere();
-        const material = createRuntimeMaterial(group.sourceMaterial, group.role, true);
-        const staticMaterial = group.role === 'leaves' && material.userData.treeWindUniforms
+        const material = createRuntimeMaterial(group.sourceMaterial, group.role, animated);
+        const staticMaterial = animated && group.role === 'leaves' && material.userData.treeWindUniforms
             ? createRuntimeMaterial(group.sourceMaterial, group.role, false)
             : material;
 
@@ -239,13 +262,21 @@ export function createTrees(scene, getTerrainSample, diagnostics, options = {}) 
     const activeBatches = new Map();
     const queuedChunkKeys = new Set();
     const emptyChunkKeys = new Set();
+    const activeLodBatches = new Map();
+    const queuedLodKeys = new Set();
+    const emptyLodKeys = new Set();
     const rawCandidateCache = new Map();
     const placementCache = new Map();
     let buildQueue = [];
+    let lodBuildQueue = [];
     let assetParts = [];
     let assetReady = false;
     let assetFailed = false;
+    let lodAssetParts = [];
+    let lodAssetReady = false;
+    let lodAssetFailed = false;
     let elapsed = 0;
+    let lastLodFocuses = [];
 
     if (!treeConfig.ativa) {
         return {
@@ -330,6 +361,64 @@ export function createTrees(scene, getTerrainSample, diagnostics, options = {}) 
         kept.sort((a, b) => b.priority - a.priority);
         const placements = kept.slice(0, treeConfig.maxPorChunk ?? 1);
         rememberLimitedMapValue(placementCache, key, placements, TREE_PLACEMENT_CACHE_LIMIT);
+        return placements;
+    }
+
+    function getLodSuperChunkIndex(chunkCoord) {
+        return Math.floor(chunkCoord / getTreeLodSuperChunkSize());
+    }
+
+    function getLodSuperChunkKey(sx, sz) {
+        return `tree-lod:${sx},${sz}`;
+    }
+
+    function getLodSuperChunkBounds(sx, sz) {
+        const size = getTreeLodSuperChunkSize();
+        const minCx = sx * size;
+        const minCz = sz * size;
+        return {
+            minCx,
+            minCz,
+            maxCx: minCx + size - 1,
+            maxCz: minCz + size - 1
+        };
+    }
+
+    function getLodSuperChunkDistanceForFocus(sx, sz, focus) {
+        const { minCx, minCz, maxCx, maxCz } = getLodSuperChunkBounds(sx, sz);
+        const dx = focus.chunkX < minCx ? minCx - focus.chunkX : Math.max(0, focus.chunkX - maxCx);
+        const dz = focus.chunkZ < minCz ? minCz - focus.chunkZ : Math.max(0, focus.chunkZ - maxCz);
+        return Math.max(dx, dz);
+    }
+
+    function getClosestLodSuperChunkDistance(sx, sz, focuses) {
+        let closestDistance = Infinity;
+        for (const focus of focuses) {
+            closestDistance = Math.min(closestDistance, getLodSuperChunkDistanceForFocus(sx, sz, focus));
+        }
+        return closestDistance;
+    }
+
+    function isDetailedChunkReady(cx, cz) {
+        const key = getChunkKey(cx, cz);
+        return activeBatches.has(key);
+    }
+
+    function isLodSuperChunkWanted(sx, sz, focuses) {
+        const distance = getClosestLodSuperChunkDistance(sx, sz, focuses);
+        return distance <= getTreeLodDistance();
+    }
+
+    function getLodPlacementsForSuperChunk(sx, sz) {
+        const placements = [];
+        const { minCx, minCz, maxCx, maxCz } = getLodSuperChunkBounds(sx, sz);
+        for (let cz = minCz; cz <= maxCz; cz++) {
+            for (let cx = minCx; cx <= maxCx; cx++) {
+                if (isInsideWorld(cx, cz)) {
+                    placements.push(...getTreePlacements(cx, cz));
+                }
+            }
+        }
         return placements;
     }
 
@@ -479,6 +568,163 @@ export function createTrees(scene, getTerrainSample, diagnostics, options = {}) 
         buildQueue.sort((a, b) => a.priority - b.priority);
     }
 
+    function queueLodSuperChunk(sx, sz, priority) {
+        if (!lodAssetReady || lodAssetFailed) return;
+
+        const key = getLodSuperChunkKey(sx, sz);
+        if (activeLodBatches.has(key) || queuedLodKeys.has(key) || emptyLodKeys.has(key)) return;
+
+        lodBuildQueue.push({ sx, sz, key, priority });
+        queuedLodKeys.add(key);
+    }
+
+    function createLodBatch(item) {
+        const placements = getLodPlacementsForSuperChunk(item.sx, item.sz);
+        if (!placements.length) {
+            rememberLimitedSetValue(emptyLodKeys, item.key, EMPTY_TREE_LOD_CACHE_LIMIT);
+            return false;
+        }
+
+        const lodConfig = getTreeLodConfig();
+        const buryAmount = lodConfig.enterraNoTerreno ?? treeConfig.enterraNoTerreno ?? 0.15;
+        const lodScaleMultiplier = lodConfig.escala ?? 1;
+        const instances = placements.map((tree) => {
+            tempPosition.set(tree.x, tree.height - buryAmount, tree.z);
+            tempEuler.set(0, tree.rotation, 0);
+            tempQuaternion.setFromEuler(tempEuler);
+            const scale = tree.scale * lodScaleMultiplier;
+            tempScale.set(scale, scale, scale);
+            tempMatrix.compose(tempPosition, tempQuaternion, tempScale);
+            return {
+                cx: tree.cx,
+                cz: tree.cz,
+                key: getChunkKey(tree.cx, tree.cz),
+                matrix: tempMatrix.clone()
+            };
+        });
+        const meshes = [];
+        for (const part of lodAssetParts) {
+            const mesh = new THREE.InstancedMesh(part.geometry, part.staticMaterial, placements.length);
+            mesh.name = `tree-lod-${part.role}-${item.key}`;
+            mesh.frustumCulled = true;
+            mesh.castShadow = lodConfig.castShadow ?? false;
+            mesh.receiveShadow = lodConfig.receiveShadow ?? false;
+
+            for (let i = 0; i < instances.length; i++) {
+                mesh.setMatrixAt(i, instances[i].matrix);
+            }
+
+            mesh.instanceMatrix.needsUpdate = true;
+            mesh.computeBoundingSphere?.();
+            scene.add(mesh);
+            meshes.push(mesh);
+        }
+
+        activeLodBatches.set(item.key, {
+            sx: item.sx,
+            sz: item.sz,
+            meshes,
+            instances,
+            hiddenMask: new Uint8Array(instances.length)
+        });
+        return true;
+    }
+
+    function pruneLodBatches(focuses) {
+        const maxDistance = getTreeLodDistance();
+        for (const [key, batch] of [...activeLodBatches]) {
+            if (getClosestLodSuperChunkDistance(batch.sx, batch.sz, focuses) <= maxDistance) continue;
+            disposeLodBatch(key);
+        }
+    }
+
+    function refreshLodQueue(focuses) {
+        if (!lodAssetReady || lodAssetFailed) return;
+
+        const maxDistance = getTreeLodDistance();
+        const size = getTreeLodSuperChunkSize();
+        const superDistance = Math.ceil(maxDistance / size) + 1;
+
+        for (const focus of focuses) {
+            const focusSx = getLodSuperChunkIndex(focus.chunkX);
+            const focusSz = getLodSuperChunkIndex(focus.chunkZ);
+            for (let dz = -superDistance; dz <= superDistance; dz++) {
+                for (let dx = -superDistance; dx <= superDistance; dx++) {
+                    const sx = focusSx + dx;
+                    const sz = focusSz + dz;
+                    if (isLodSuperChunkWanted(sx, sz, focuses)) {
+                        const distance = getClosestLodSuperChunkDistance(sx, sz, focuses);
+                        queueLodSuperChunk(sx, sz, distance);
+                    }
+                }
+            }
+        }
+
+        lodBuildQueue = lodBuildQueue.filter((item) => {
+            const wanted = isLodSuperChunkWanted(item.sx, item.sz, focuses);
+            if (!wanted) queuedLodKeys.delete(item.key);
+            return wanted;
+        });
+        lodBuildQueue.sort((a, b) => a.priority - b.priority);
+    }
+
+    function processLodQueue() {
+        if (!lodAssetReady || lodAssetFailed) return;
+
+        let built = 0;
+        let attempts = 0;
+        const lodConfig = getTreeLodConfig();
+        const batchesPerFrame = lodConfig.chunksPorFrame ?? 2;
+        const maxAttempts = Math.max(batchesPerFrame, lodConfig.tentativasFilaPorFrame ?? batchesPerFrame * 4);
+        while (lodBuildQueue.length && built < batchesPerFrame && attempts < maxAttempts) {
+            const item = lodBuildQueue.shift();
+            attempts++;
+            queuedLodKeys.delete(item.key);
+            if (activeLodBatches.has(item.key) || emptyLodKeys.has(item.key)) continue;
+            if (createLodBatch(item)) {
+                built++;
+            }
+        }
+    }
+
+    function shouldHideLodInstance(instance, focuses) {
+        if (!assetReady || assetFailed) return false;
+        if (!isDetailedChunkReady(instance.cx, instance.cz)) return false;
+        return getClosestDistanceToFocus(instance.cx, instance.cz, focuses) <= getTreeLodHideDistance();
+    }
+
+    function updateLodVisibilityForFocuses(focuses) {
+        const lodDistance = getTreeLodDistance();
+
+        for (const batch of activeLodBatches.values()) {
+            const distance = getClosestLodSuperChunkDistance(batch.sx, batch.sz, focuses);
+            const batchInRange = distance <= lodDistance;
+            let changed = false;
+            let visibleInstances = 0;
+
+            if (batchInRange) {
+                for (let i = 0; i < batch.instances.length; i++) {
+                    const hidden = shouldHideLodInstance(batch.instances[i], focuses) ? 1 : 0;
+                    if (batch.hiddenMask[i] !== hidden) {
+                        batch.hiddenMask[i] = hidden;
+                        for (const mesh of batch.meshes) {
+                            mesh.setMatrixAt(i, hidden ? hiddenLodMatrix : batch.instances[i].matrix);
+                        }
+                        changed = true;
+                    }
+                    if (!hidden) visibleInstances++;
+                }
+            }
+
+            for (const mesh of batch.meshes) {
+                mesh.visible = batchInRange && visibleInstances > 0;
+                if (changed) {
+                    mesh.instanceMatrix.needsUpdate = true;
+                }
+            }
+        }
+    }
+
     function getChunksPerFrame(isPlayerMoving) {
         if (isPlayerMoving) {
             return treeConfig.chunksPorFrameMovendo ?? treeConfig.chunksPorFrame ?? 1;
@@ -546,16 +792,33 @@ export function createTrees(scene, getTerrainSample, diagnostics, options = {}) 
         updateWind(deltaSeconds);
 
         const focuses = createTreeFocuses(playerPositions);
-        if (!focuses.length || assetFailed) return;
+        if (!focuses.length) return;
 
-        pruneBatches(focuses);
-        refreshQueue(focuses);
-        processQueue(focuses, isPlayerMoving);
-        updateBatchAnimations(focuses);
+        lastLodFocuses = focuses;
+
+        if (!assetFailed) {
+            pruneBatches(focuses);
+            refreshQueue(focuses);
+            processQueue(focuses, isPlayerMoving);
+            updateBatchAnimations(focuses);
+        }
+
+        pruneLodBatches(focuses);
+        refreshLodQueue(focuses);
+        processLodQueue();
+        updateLodVisibilityForFocuses(focuses);
 
         diagnostics?.setCounter('treeBatches', activeBatches.size);
         diagnostics?.setCounter('treeQueue', buildQueue.length);
         diagnostics?.setCounter('treeEmptyChunks', emptyChunkKeys.size);
+        diagnostics?.setCounter('treeLodBatches', activeLodBatches.size);
+        diagnostics?.setCounter('treeLodQueue', lodBuildQueue.length);
+        diagnostics?.setCounter('treeLodEmptyChunks', emptyLodKeys.size);
+        diagnostics?.setCounter('treeLodAssetReady', lodAssetReady ? 1 : 0);
+        if (assetFailed) {
+            diagnostics?.setCounter('treeAssetReady', 0);
+            return;
+        }
         diagnostics?.setCounter('treeAssetReady', assetReady ? 1 : 0);
     }
 
@@ -563,6 +826,7 @@ export function createTrees(scene, getTerrainSample, diagnostics, options = {}) 
         const focusChunkX = getChunkCoord(position.x);
         const focusChunkZ = getChunkCoord(position.z);
         const maxDistance = getTreeDistance();
+        const focus = { chunkX: focusChunkX, chunkZ: focusChunkZ };
 
         for (const batch of activeBatches.values()) {
             const visible = Math.max(
@@ -573,6 +837,8 @@ export function createTrees(scene, getTerrainSample, diagnostics, options = {}) 
                 mesh.visible = visible;
             }
         }
+
+        updateLodVisibilityForFocuses([focus]);
     }
 
     function restoreVisibility() {
@@ -580,6 +846,10 @@ export function createTrees(scene, getTerrainSample, diagnostics, options = {}) 
             for (const mesh of batch.meshes) {
                 mesh.visible = true;
             }
+        }
+
+        if (lastLodFocuses.length) {
+            updateLodVisibilityForFocuses(lastLodFocuses);
         }
     }
 
@@ -593,6 +863,16 @@ export function createTrees(scene, getTerrainSample, diagnostics, options = {}) 
         activeBatches.delete(key);
     }
 
+    function disposeLodBatch(key) {
+        const batch = activeLodBatches.get(key);
+        if (!batch) return;
+
+        for (const mesh of batch.meshes) {
+            mesh.parent?.remove(mesh);
+        }
+        activeLodBatches.delete(key);
+    }
+
     function disposeChunk(chunk) {
         const key = getChunkKey(chunk.cx, chunk.cz);
         disposeBatch(key);
@@ -604,14 +884,20 @@ export function createTrees(scene, getTerrainSample, diagnostics, options = {}) 
         for (const key of [...activeBatches.keys()]) {
             disposeBatch(key);
         }
+        for (const key of [...activeLodBatches.keys()]) {
+            disposeLodBatch(key);
+        }
         buildQueue = [];
+        lodBuildQueue = [];
         queuedChunkKeys.clear();
+        queuedLodKeys.clear();
         emptyChunkKeys.clear();
+        emptyLodKeys.clear();
         rawCandidateCache.clear();
         placementCache.clear();
 
         const materials = new Set();
-        for (const part of assetParts) {
+        for (const part of [...assetParts, ...lodAssetParts]) {
             part.geometry.dispose();
             materials.add(part.material);
             materials.add(part.staticMaterial);
@@ -620,13 +906,14 @@ export function createTrees(scene, getTerrainSample, diagnostics, options = {}) 
             material?.dispose();
         }
         assetParts = [];
+        lodAssetParts = [];
     }
 
     const loader = new GLTFLoader();
     loader.load(
-        treeConfig.asset,
+        getAssetUrl(treeConfig.asset),
         (gltf) => {
-            assetParts = prepareTreeAsset(gltf.scene);
+            assetParts = prepareTreeAsset(gltf.scene, { animated: true });
             assetReady = assetParts.length > 0;
             diagnostics?.setCounter('treeAssetReady', assetReady ? 1 : 0);
         },
@@ -638,13 +925,31 @@ export function createTrees(scene, getTerrainSample, diagnostics, options = {}) 
         }
     );
 
-        return {
-            updateForPlayers,
-            isPositionBlocked,
-            getBlockersForChunk,
-            setVisibilityForFocus,
-            restoreVisibility,
-            disposeChunk,
+    const lodConfig = getTreeLodConfig();
+    if (lodConfig.ativo !== false && lodConfig.asset) {
+        loader.load(
+            getAssetUrl(lodConfig.asset),
+            (gltf) => {
+                lodAssetParts = prepareTreeAsset(gltf.scene, { animated: false });
+                lodAssetReady = lodAssetParts.length > 0;
+                diagnostics?.setCounter('treeLodAssetReady', lodAssetReady ? 1 : 0);
+            },
+            undefined,
+            (error) => {
+                lodAssetFailed = true;
+                diagnostics?.setCounter('treeLodAssetFailed', 1);
+                console.warn('Nao foi possivel carregar a arvore LOD:', error);
+            }
+        );
+    }
+
+    return {
+        updateForPlayers,
+        isPositionBlocked,
+        getBlockersForChunk,
+        setVisibilityForFocus,
+        restoreVisibility,
+        disposeChunk,
         dispose
     };
 }

@@ -10,6 +10,7 @@ import { CONFIG } from './config.js';
 import { GAME_MODE, buildModeUrl, getGameMode } from './gameModes.js';
 import { createSinglePlayerMode } from './singlePlayerMode.js';
 import { createLocalCoopMode } from './localCoopMode.js';
+import { hideLoadingScreen, showLoadingScreen, updateLoadingScreen } from './loadingScreen.js';
 
 const worldSeed = resolveWorldSeed();
 setTerrainSeed(worldSeed.numeric);
@@ -17,10 +18,22 @@ setTerrainSeed(worldSeed.numeric);
 const diagnostics = createPerformanceDiagnostics(renderer);
 const dayNightCycle = createDayNightCycle(scene, camera);
 const terrain = createTerrain(scene, diagnostics);
-const { getHeight, getSample, getChunkGroup, setChunkLifecycle, updateChunksForPlayers, dispose } = terrain;
+const {
+    getHeight,
+    getSample,
+    getChunkGroup,
+    getChunkVegetationMetadata,
+    getMacroWorldProgress,
+    isMacroWorldReady,
+    preloadMacroWorldStep,
+    setChunkLifecycle,
+    updateChunksForPlayers,
+    dispose
+} = terrain;
 const trees = createTrees(scene, getSample, diagnostics, { getChunkGroup });
 const grass = createGrass(scene, getHeight, getSample, diagnostics, {
     getChunkGroup,
+    getChunkVegetationMetadata,
     isPositionBlocked: trees.isPositionBlocked,
     getBlockersForChunk: trees.getBlockersForChunk
 });
@@ -31,14 +44,6 @@ setChunkLifecycle({
     }
 });
 const gameMode = getGameMode();
-const mode = gameMode === GAME_MODE.LOCAL_COOP
-    ? createLocalCoopMode({ scene, camera, renderer, getHeight })
-    : createSinglePlayerMode({ scene, camera, renderer, getHeight });
-
-if (mode.player) {
-    mode.player.position.set(0, getHeight(0, 0) + CONFIG.terreno.alturaOlhos + 2, 0);
-}
-
 const seedValue = document.getElementById('seed-value');
 const copySeedButton = document.getElementById('copy-seed');
 const newWorldButton = document.getElementById('new-world');
@@ -86,6 +91,8 @@ coopModeButton?.addEventListener('click', (event) => {
 const clock = new THREE.Clock();
 let fpsFrames = 0;
 let fpsElapsed = 0;
+let startWarmupPromise = null;
+let didInitialWarmup = false;
 
 function updateFpsCounter(delta) {
     if (!fpsCounter) return;
@@ -98,6 +105,72 @@ function updateFpsCounter(delta) {
         fpsFrames = 0;
         fpsElapsed = 0;
     }
+}
+
+function getLoadingStatus(progress) {
+    if (!isMacroWorldReady()) return 'Preparando terreno distante...';
+    if (progress < 0.55) return 'Preparando terreno proximo...';
+    if (progress < 0.86) return 'Distribuindo vegetacao...';
+    if (progress < 0.98) return 'Finalizando mundo...';
+    return 'Pronto';
+}
+
+function nextFrame() {
+    return new Promise((resolve) => requestAnimationFrame(resolve));
+}
+
+function warmUpWorldBeforeStart(focusPosition) {
+    if (didInitialWarmup) return null;
+    if (startWarmupPromise) return startWarmupPromise;
+
+    startWarmupPromise = (async () => {
+        const loadingConfig = CONFIG.carregamentoInicial;
+        const minDurationMs = loadingConfig.duracaoMinimaMs ?? 1200;
+        const minFrames = loadingConfig.framesMinimos ?? 45;
+        const updatesPerFrame = Math.max(1, loadingConfig.atualizacoesPorFrame ?? 1);
+        const macroBudgetMs = CONFIG.terreno.macroSuperChunks?.tempoGeracaoMs ?? 8;
+        const focus = focusPosition ?? mode.player?.position ?? { x: 0, z: 0 };
+        const focuses = [focus];
+        const startedAt = performance.now();
+        let frame = 0;
+
+        showLoadingScreen('Preparando terreno...');
+
+        while (frame < minFrames || performance.now() - startedAt < minDurationMs || !isMacroWorldReady()) {
+            const elapsedMs = performance.now() - startedAt;
+            const warmupProgress = Math.max(frame / minFrames, elapsedMs / minDurationMs);
+            const macroProgress = getMacroWorldProgress();
+            const progress = Math.min(0.98, macroProgress * 0.68 + Math.min(1, warmupProgress) * 0.32);
+            updateLoadingScreen(progress, getLoadingStatus(progress));
+
+            preloadMacroWorldStep(performance.now() + macroBudgetMs, focuses);
+
+            for (let i = 0; i < updatesPerFrame; i++) {
+                updateChunksForPlayers(focuses, false);
+                trees.updateForPlayers(1 / 60, focuses, false);
+                grass.updateForPlayers(1 / 60, focuses, false);
+            }
+
+            mode.render(grass, trees);
+            frame++;
+            await nextFrame();
+        }
+
+        updateLoadingScreen(1, 'Pronto');
+        hideLoadingScreen();
+        didInitialWarmup = true;
+        startWarmupPromise = null;
+    })();
+
+    return startWarmupPromise;
+}
+
+const mode = gameMode === GAME_MODE.LOCAL_COOP
+    ? createLocalCoopMode({ scene, camera, renderer, getHeight, requestStart: warmUpWorldBeforeStart })
+    : createSinglePlayerMode({ scene, camera, renderer, getHeight, requestStart: warmUpWorldBeforeStart });
+
+if (mode.player) {
+    mode.player.position.set(0, getHeight(0, 0) + CONFIG.terreno.alturaOlhos + 2, 0);
 }
 
 function loop() {
