@@ -1,6 +1,10 @@
 import * as THREE from 'three';
 import { CONFIG } from './config.js';
 import { updatePlayerPhysics } from './physics.js';
+import { createPlayerVitals } from './playerVitals.js';
+import { createBowState, getBowHudState, setBowHeld, updateBowState } from './bow.js';
+import { createBowView, createCarriedBow } from './bowView.js';
+import { createDashState, getDashHudState, updateDashInput, updateDashState } from './dash.js';
 
 const GAMEPAD_DEADZONE = 0.18;
 const MOUSE_SENSITIVITY = 0.0022;
@@ -9,14 +13,19 @@ const MAX_PITCH = Math.PI / 2 - 0.08;
 const MIN_PITCH = -MAX_PITCH;
 const PLAYER_ONE_BODY_LAYER = 1;
 const PLAYER_TWO_BODY_LAYER = 2;
+const PLAYER_ONE_BOW_LAYER = 3;
+const PLAYER_TWO_BOW_LAYER = 4;
 const PLAYER_HITBOX_RADIUS = 0.55;
 const PLAYER_HITBOX_HEIGHT = 2.0;
+const BOW_CONFIG = CONFIG.mecanicas?.arco ?? {};
 
 const forwardVector = new THREE.Vector3();
 const rightVector = new THREE.Vector3();
 const movementVector = new THREE.Vector3();
 const cameraEuler = new THREE.Euler(0, 0, 0, 'YXZ');
 const hitboxDelta = new THREE.Vector2();
+const shotDirection = new THREE.Vector3();
+const shotOrigin = new THREE.Vector3();
 
 function createKeyState() {
     return {
@@ -25,6 +34,9 @@ function createKeyState() {
         KeyS: false,
         KeyD: false,
         Space: false,
+        KeyF: false,
+        ShiftLeft: false,
+        ShiftRight: false,
         Enter: false
     };
 }
@@ -39,6 +51,28 @@ function readAxis(value) {
 
 function isGamepadJumping(gamepad) {
     return Boolean(gamepad?.buttons?.some((button, index) => index <= 1 && button.pressed));
+}
+
+function isGamepadShooting(gamepad) {
+    const buttons = gamepad?.buttons;
+    if (!buttons) return false;
+
+    return Boolean(
+        buttons[7]?.pressed
+        || (buttons[7]?.value ?? 0) > 0.22
+        || buttons[5]?.pressed
+    );
+}
+
+function isGamepadDashing(gamepad) {
+    const buttons = gamepad?.buttons;
+    if (!buttons) return false;
+
+    return Boolean(
+        buttons[4]?.pressed
+        || buttons[6]?.pressed
+        || (buttons[6]?.value ?? 0) > 0.22
+    );
 }
 
 function getConnectedGamepads() {
@@ -67,12 +101,14 @@ function createPlayerBlock(color, label) {
     });
     const body = new THREE.Mesh(geometry, material);
     body.position.y = -CONFIG.terreno.alturaOlhos / 2;
+    body.castShadow = false;
+    body.receiveShadow = false;
     group.add(body);
 
     return { group, body, geometry, material };
 }
 
-function createCoopPlayer({ color, label, camera, startX, startZ, yaw, getHeight }) {
+function createCoopPlayer({ id, color, label, camera, startX, startZ, yaw, getHeight }) {
     const block = createPlayerBlock(color, label);
     block.group.position.set(
         startX,
@@ -81,13 +117,19 @@ function createCoopPlayer({ color, label, camera, startX, startZ, yaw, getHeight
     );
 
     return {
+        id,
+        label,
         ...block,
         camera,
         yaw,
         pitch: 0,
+        vitals: createPlayerVitals({ id, label }),
+        bow: createBowState(),
+        dash: createDashState(),
         state: {
             velocidadeY: 0,
-            noChao: false
+            noChao: false,
+            fallPeakY: null
         },
         hitbox: {
             radius: PLAYER_HITBOX_RADIUS,
@@ -98,18 +140,23 @@ function createCoopPlayer({ color, label, camera, startX, startZ, yaw, getHeight
             z: 0,
             lookX: 0,
             lookY: 0,
-            jump: false
+            jump: false,
+            dash: false
         }
     };
 }
 
-function updateCoopPlayerPhysics(delta, player, getHeight) {
-    updatePlayerPhysics({
+function updateCoopPlayerPhysics(delta, player, getHeight, resolveTreeCollision) {
+    return updatePlayerPhysics({
         delta,
         position: player.group.position,
         state: player.state,
         getHeight,
         jump: player.input.jump,
+        movementSpeedMultiplier: player.movementSpeedMultiplier ?? 1,
+        resolveHorizontalCollision(position) {
+            resolveTreeCollision?.(position, player.hitbox.radius);
+        },
         applyHorizontalMovement(distance) {
             forwardVector.set(-Math.sin(player.yaw), 0, -Math.cos(player.yaw));
             rightVector.set(Math.cos(player.yaw), 0, -Math.sin(player.yaw));
@@ -131,6 +178,7 @@ function resolvePlayerHitboxes(players, getHeight) {
         for (let j = i + 1; j < players.length; j++) {
             const a = players[i];
             const b = players[j];
+            if (a.vitals.isDead || b.vitals.isDead) continue;
             const aPosition = a.group.position;
             const bPosition = b.group.position;
             const verticalDistance = Math.abs(aPosition.y - bPosition.y);
@@ -175,6 +223,7 @@ function updateKeyboardMouseInput(player, keyboard) {
     player.input.x = (keyboard.KeyD ? 1 : 0) - (keyboard.KeyA ? 1 : 0);
     player.input.z = (keyboard.KeyS ? 1 : 0) - (keyboard.KeyW ? 1 : 0);
     player.input.jump = keyboard.Space;
+    player.input.dash = keyboard.ShiftLeft || keyboard.ShiftRight;
 }
 
 function updateGamepadInput(player, gamepad) {
@@ -184,6 +233,7 @@ function updateGamepadInput(player, gamepad) {
         player.input.lookX = 0;
         player.input.lookY = 0;
         player.input.jump = false;
+        player.input.dash = false;
         return;
     }
 
@@ -192,11 +242,21 @@ function updateGamepadInput(player, gamepad) {
     player.input.lookX = readAxis(gamepad.axes?.[2] ?? 0);
     player.input.lookY = readAxis(gamepad.axes?.[3] ?? 0);
     player.input.jump = isGamepadJumping(gamepad);
+    player.input.dash = isGamepadDashing(gamepad);
 }
 
-export function createLocalCoopMode({ scene, camera, renderer, getHeight, requestStart }) {
+export function createLocalCoopMode({
+    scene,
+    camera,
+    renderer,
+    getHeight,
+    getSample,
+    resolveTreeCollision,
+    requestStart
+}) {
     const keyboard = createKeyState();
     const playerOne = createCoopPlayer({
+        id: 'player-1',
         color: 0x2f7dff,
         label: 'Player 1',
         camera,
@@ -206,6 +266,7 @@ export function createLocalCoopMode({ scene, camera, renderer, getHeight, reques
         getHeight
     });
     const playerTwo = createCoopPlayer({
+        id: 'player-2',
         color: 0xff8a2f,
         label: 'Player 2',
         camera: new THREE.PerspectiveCamera(75, 1, 0.1, 1500),
@@ -217,11 +278,21 @@ export function createLocalCoopMode({ scene, camera, renderer, getHeight, reques
     const players = [playerOne, playerTwo];
     let isStarted = false;
     let isStarting = false;
+    let mouseShootHeld = false;
+
+    playerOne.bowView = createBowView(scene, playerOne.camera, { layer: PLAYER_ONE_BOW_LAYER });
+    playerTwo.bowView = createBowView(scene, playerTwo.camera, { layer: PLAYER_TWO_BOW_LAYER });
+    playerOne.carriedBow = createCarriedBow({ layer: PLAYER_ONE_BODY_LAYER });
+    playerTwo.carriedBow = createCarriedBow({ layer: PLAYER_TWO_BODY_LAYER });
+    playerOne.group.add(playerOne.carriedBow.object);
+    playerTwo.group.add(playerTwo.carriedBow.object);
 
     playerOne.body.layers.set(PLAYER_ONE_BODY_LAYER);
     playerTwo.body.layers.set(PLAYER_TWO_BODY_LAYER);
     playerOne.camera.layers.enable(PLAYER_TWO_BODY_LAYER);
+    playerOne.camera.layers.enable(PLAYER_ONE_BOW_LAYER);
     playerTwo.camera.layers.enable(PLAYER_ONE_BODY_LAYER);
+    playerTwo.camera.layers.enable(PLAYER_TWO_BOW_LAYER);
 
     for (const player of players) {
         scene.add(player.group);
@@ -245,50 +316,106 @@ export function createLocalCoopMode({ scene, camera, renderer, getHeight, reques
         if (isStarted || isStarting) return;
         isStarting = true;
         try {
+            document.body.requestPointerLock?.();
             const startResult = requestStart?.(playerOne.group.position);
             if (startResult) await startResult;
+            if (document.pointerLockElement !== document.body) {
+                if (menu) menu.style.display = 'flex';
+                return;
+            }
             isStarted = true;
             if (menu) menu.style.display = 'none';
-            document.body.requestPointerLock?.();
         } finally {
             isStarting = false;
         }
     }
 
-    menu?.addEventListener('click', (event) => {
+    function onMenuClick(event) {
         if (event.target instanceof Element && event.target.closest('[data-menu-control], button, input, textarea, select')) return;
         start();
-    });
+    }
 
-    document.addEventListener('pointerlockchange', () => {
+    function onPointerLockChange() {
         if (!isStarted) return;
         if (document.pointerLockElement === document.body) return;
         isStarted = false;
+        mouseShootHeld = false;
         if (menu) menu.style.display = 'flex';
-    });
+    }
 
-    window.addEventListener('keydown', (event) => {
+    function onKeyDown(event) {
         if (event.code in keyboard) {
             keyboard[event.code] = true;
             event.preventDefault();
         }
         if (!isStarted && event.code === 'Enter') start();
-    });
+    }
 
-    window.addEventListener('keyup', (event) => {
+    function onKeyUp(event) {
         if (event.code in keyboard) {
             keyboard[event.code] = false;
             event.preventDefault();
         }
-    });
+    }
 
-    window.addEventListener('mousemove', (event) => {
+    function onMouseMove(event) {
         if (!isStarted || document.pointerLockElement !== document.body) return;
         playerOne.yaw -= event.movementX * MOUSE_SENSITIVITY;
         playerOne.pitch = clampPitch(playerOne.pitch - event.movementY * MOUSE_SENSITIVITY);
-    });
+    }
+
+    function onMouseDown(event) {
+        if (event.button !== 0 || !isStarted || document.pointerLockElement !== document.body) return;
+        mouseShootHeld = true;
+        event.preventDefault();
+    }
+
+    function onMouseUp(event) {
+        if (event.button !== 0) return;
+        if (!isStarted && !mouseShootHeld) return;
+        mouseShootHeld = false;
+        event.preventDefault();
+    }
+
+    menu?.addEventListener('click', onMenuClick);
+    document.addEventListener('pointerlockchange', onPointerLockChange);
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mousedown', onMouseDown);
+    window.addEventListener('mouseup', onMouseUp);
+
+    function createShot(player, level) {
+        player.camera.getWorldDirection(shotDirection).normalize();
+        player.camera.getWorldPosition(shotOrigin);
+        shotOrigin.addScaledVector(shotDirection, BOW_CONFIG.distanciaSpawn ?? 0.85);
+
+        return {
+            ownerId: player.id,
+            origin: shotOrigin.clone(),
+            direction: shotDirection.clone(),
+            level
+        };
+    }
+
+    function getPlayerInfo(
+        player,
+        bowHudState = getBowHudState(player.bow),
+        dashHudState = getDashHudState(player.dash)
+    ) {
+        return {
+            id: player.id,
+            label: player.label,
+            position: player.group.position,
+            vitals: player.vitals,
+            bow: bowHudState,
+            dash: dashHudState,
+            hitbox: player.hitbox
+        };
+    }
 
     function update(delta) {
+        const shots = [];
         const gamepads = getAssignedGamepads();
 
         updateKeyboardMouseInput(playerOne, keyboard);
@@ -299,17 +426,34 @@ export function createLocalCoopMode({ scene, camera, renderer, getHeight, reques
             const keyboardMoveX = playerOne.input.x;
             const keyboardMoveZ = playerOne.input.z;
             const keyboardJump = playerOne.input.jump;
+            const keyboardDash = playerOne.input.dash;
             updateGamepadInput(playerOne, gamepads.playerOne);
             playerOne.input.x = playerOne.input.x || keyboardMoveX;
             playerOne.input.z = playerOne.input.z || keyboardMoveZ;
             playerOne.input.jump = playerOne.input.jump || keyboardJump;
+            playerOne.input.dash = playerOne.input.dash || keyboardDash;
         }
 
         updateGamepadInput(playerTwo, gamepads.playerTwo);
 
+        setBowHeld(playerOne.bow, isStarted && !playerOne.vitals.isDead && (
+            mouseShootHeld
+            || keyboard.KeyF
+            || isGamepadShooting(gamepads.playerOne)
+        ));
+        setBowHeld(playerTwo.bow, isStarted && !playerTwo.vitals.isDead && isGamepadShooting(gamepads.playerTwo));
+
         if (isStarted) {
             for (const player of players) {
-                updateCoopPlayerPhysics(delta, player, getHeight);
+                let landing = null;
+                const isMovingPlayer = player.input.x !== 0 || player.input.z !== 0;
+                const canAct = !player.vitals.isDead;
+                updateDashInput(player.dash, canAct && player.input.dash && isMovingPlayer, canAct && isMovingPlayer);
+                player.movementSpeedMultiplier = updateDashState(player.dash, delta);
+                if (!player.vitals.isDead) {
+                    landing = updateCoopPlayerPhysics(delta, player, getHeight, resolveTreeCollision)?.landing ?? null;
+                }
+                player.vitals.update(delta, player.group.position, getSample, landing);
             }
             resolvePlayerHitboxes(players, getHeight);
             for (const player of players) {
@@ -317,12 +461,30 @@ export function createLocalCoopMode({ scene, camera, renderer, getHeight, reques
             }
         }
 
-        const isMoving = players.some((player) => player.input.x !== 0 || player.input.z !== 0);
+        for (const player of players) {
+            const bowShot = updateBowState(player.bow, delta, isStarted && !player.vitals.isDead);
+            if (bowShot) {
+                shots.push(createShot(player, bowShot.level));
+            }
+        }
+
+        const playerInfos = players.map((player) => {
+            const bowHudState = getBowHudState(player.bow);
+            const dashHudState = getDashHudState(player.dash);
+            player.body.visible = !player.vitals.isDead;
+            player.bowView?.update(bowHudState, isStarted && !player.vitals.isDead);
+            player.carriedBow?.update(bowHudState, isStarted && !player.vitals.isDead);
+            return getPlayerInfo(player, bowHudState, dashHudState);
+        });
+
+        const isMoving = players.some((player) => !player.vitals.isDead && (player.input.x !== 0 || player.input.z !== 0));
         return {
             isActive: isStarted,
             isMoving,
             primary: playerOne.group.position,
-            focuses: players.map((player) => player.group.position)
+            focuses: players.map((player) => player.group.position),
+            players: playerInfos,
+            shots
         };
     }
 
@@ -367,10 +529,20 @@ export function createLocalCoopMode({ scene, camera, renderer, getHeight, reques
     }
 
     function dispose() {
+        menu?.removeEventListener('click', onMenuClick);
+        document.removeEventListener('pointerlockchange', onPointerLockChange);
+        window.removeEventListener('keydown', onKeyDown);
+        window.removeEventListener('keyup', onKeyUp);
+        window.removeEventListener('mousemove', onMouseMove);
+        window.removeEventListener('mousedown', onMouseDown);
+        window.removeEventListener('mouseup', onMouseUp);
+
         for (const item of splitCrosshairs) {
             item.remove();
         }
         for (const player of players) {
+            player.bowView?.dispose();
+            player.carriedBow?.dispose();
             scene.remove(player.group);
             player.geometry.dispose();
             player.material.dispose();

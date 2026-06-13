@@ -116,6 +116,42 @@ export function createChunkTerrainGeometry(startX, startZ, endX, endZ, sampleTer
         }
     }
 
+    function setTopNormal(row, column) {
+        const left = topVertexIndices[row][Math.max(0, column - 1)];
+        const right = topVertexIndices[row][Math.min(widthSegments, column + 1)];
+        const up = topVertexIndices[Math.max(0, row - 1)][column];
+        const down = topVertexIndices[Math.min(depthSegments, row + 1)][column];
+        const leftOffset = left * 3;
+        const rightOffset = right * 3;
+        const upOffset = up * 3;
+        const downOffset = down * 3;
+        const tangentXX = positions[rightOffset] - positions[leftOffset];
+        const tangentXY = positions[rightOffset + 1] - positions[leftOffset + 1];
+        const tangentXZ = positions[rightOffset + 2] - positions[leftOffset + 2];
+        const tangentZX = positions[downOffset] - positions[upOffset];
+        const tangentZY = positions[downOffset + 1] - positions[upOffset + 1];
+        const tangentZZ = positions[downOffset + 2] - positions[upOffset + 2];
+        let nx = tangentZY * tangentXZ - tangentZZ * tangentXY;
+        let ny = tangentZZ * tangentXX - tangentZX * tangentXZ;
+        let nz = tangentZX * tangentXY - tangentZY * tangentXX;
+        if (ny < 0) {
+            nx = -nx;
+            ny = -ny;
+            nz = -nz;
+        }
+        const length = Math.hypot(nx, ny, nz) || 1;
+        const normalOffset = topVertexIndices[row][column] * 3;
+        normals[normalOffset] = nx / length;
+        normals[normalOffset + 1] = ny / length;
+        normals[normalOffset + 2] = nz / length;
+    }
+
+    for (let row = 0; row <= depthSegments; row++) {
+        for (let column = 0; column <= widthSegments; column++) {
+            setTopNormal(row, column);
+        }
+    }
+
     for (let row = 0; row < depthSegments; row++) {
         for (let column = 0; column < widthSegments; column++) {
             const a = topVertexIndices[row][column];
@@ -129,12 +165,17 @@ export function createChunkTerrainGeometry(startX, startZ, endX, endZ, sampleTer
     function pushSkirtVertex(topIndex) {
         const positionOffset = topIndex * 3;
         const colorOffset = topIndex * 3;
-        return pushVertex(
+        const index = pushVertex(
             positions[positionOffset],
             positions[positionOffset + 1] - TERRAIN_SKIRT_DEPTH,
             positions[positionOffset + 2],
             tempColor.setRGB(colors[colorOffset], colors[colorOffset + 1], colors[colorOffset + 2])
         );
+        const normalOffset = index * 3;
+        normals[normalOffset] = normals[positionOffset];
+        normals[normalOffset + 1] = normals[positionOffset + 1];
+        normals[normalOffset + 2] = normals[positionOffset + 2];
+        return index;
     }
 
     function addSkirtSegment(topA, topB) {

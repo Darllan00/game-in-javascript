@@ -480,6 +480,7 @@ export function createGrass(scene, getHeight, getTerrainSample, diagnostics, opt
     const getChunkVegetationMetadata = options.getChunkVegetationMetadata ?? (() => null);
     const isPositionBlocked = options.isPositionBlocked ?? (() => false);
     const getBlockersForChunk = options.getBlockersForChunk ?? null;
+    const getLightingState = options.getLightingState ?? (() => null);
     let tileBuildQueue = [];
     let lastPlayerChunkX = null;
     let lastPlayerChunkZ = null;
@@ -926,6 +927,15 @@ export function createGrass(scene, getHeight, getTerrainSample, diagnostics, opt
     }
 
     function updateLightLevel() {
+        const lighting = getLightingState?.();
+        if (lighting) {
+            const lightLevel = THREE.MathUtils.clamp(lighting.lightLevel, 0.18, 1.05);
+            nearMaterial.uniforms.uLightLevel.value = lightLevel;
+            midMaterial.uniforms.uLightLevel.value = lightLevel;
+            farMaterial.uniforms.uLightLevel.value = lightLevel;
+            return;
+        }
+
         if (scene.background?.isColor) {
             lightColor.copy(scene.background);
             const luminance = lightColor.r * 0.299 + lightColor.g * 0.587 + lightColor.b * 0.114;

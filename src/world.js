@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { COLORS, getRenderQualityProfile } from './config.js';
+import { COLORS, CONFIG, getRenderQualityProfile } from './config.js';
 
 const renderQuality = getRenderQualityProfile();
 
@@ -18,5 +18,17 @@ export const renderer = new THREE.WebGLRenderer({ antialias: renderQuality.antia
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, renderQuality.pixelRatioMax));
 renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = CONFIG.iluminacao?.toneMapping === 'aces'
+    ? THREE.ACESFilmicToneMapping
+    : THREE.NoToneMapping;
+renderer.toneMappingExposure = CONFIG.iluminacao?.exposicao ?? 1;
+renderer.shadowMap.enabled = CONFIG.iluminacao?.sombras?.ativa === true;
+renderer.shadowMap.type = CONFIG.iluminacao?.sombras?.tipo === 'hard'
+    ? THREE.BasicShadowMap
+    : THREE.PCFSoftShadowMap;
+renderer.shadowMap.autoUpdate = CONFIG.iluminacao?.sombras?.atualizacaoManual === true
+    ? false
+    : renderer.shadowMap.enabled;
+renderer.shadowMap.needsUpdate = renderer.shadowMap.enabled;
 
 document.body.appendChild(renderer.domElement);

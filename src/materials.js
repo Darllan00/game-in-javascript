@@ -5,7 +5,7 @@ export function createTerrainMaterial() {
         color: 0xffffff,
         vertexColors: true,
         fog: true,
-        toneMapped: false
+        toneMapped: true
     });
 }
 

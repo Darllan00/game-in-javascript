@@ -8,6 +8,8 @@ import { createTerrainDataMap } from './terrainDataMap.js';
 import { createWater } from './water.js';
 import { createGrass } from './grass.js';
 import { createTrees } from './trees.js';
+import { createArrowSystem } from './arrowSystem.js';
+import { createCombatHud } from './combatHud.js';
 import { CONFIG } from './config.js';
 import { GAME_MODE, buildModeUrl, getGameMode } from './gameModes.js';
 import { createSinglePlayerMode } from './singlePlayerMode.js';
@@ -18,9 +20,12 @@ const worldSeed = resolveWorldSeed();
 setTerrainSeed(worldSeed.numeric);
 
 const diagnostics = createPerformanceDiagnostics(renderer);
-const dayNightCycle = createDayNightCycle(scene, camera);
+const dayNightCycle = createDayNightCycle(scene, camera, renderer);
 const terrainDataMap = createTerrainDataMap(diagnostics);
-const terrain = createTerrain(scene, diagnostics, { terrainDataMap });
+const terrain = createTerrain(scene, diagnostics, {
+    terrainDataMap,
+    requestShadowUpdate: dayNightCycle.requestShadowUpdate
+});
 const {
     getHeight,
     getSample,
@@ -33,14 +38,26 @@ const {
     updateChunksForPlayers,
     dispose
 } = terrain;
-const trees = createTrees(scene, getSample, diagnostics, { getChunkGroup, getChunkVegetationMetadata });
-const water = createWater(scene, getSample, diagnostics, { getChunkGroup });
+const trees = createTrees(scene, getSample, diagnostics, {
+    getChunkGroup,
+    getChunkVegetationMetadata,
+    requestShadowUpdate: dayNightCycle.requestShadowUpdate
+});
+const water = createWater(scene, getSample, diagnostics, {
+    getChunkGroup,
+    getLightingState: dayNightCycle.getLightingState
+});
 const grass = createGrass(scene, getHeight, getSample, diagnostics, {
     getChunkGroup,
     getChunkVegetationMetadata,
     isPositionBlocked: trees.isPositionBlocked,
-    getBlockersForChunk: trees.getBlockersForChunk
+    getBlockersForChunk: trees.getBlockersForChunk,
+    getLightingState: dayNightCycle.getLightingState
 });
+const arrows = createArrowSystem(scene, getHeight, diagnostics, {
+    findTrunkImpact: trees.findTrunkImpact
+});
+const combatHud = createCombatHud();
 setChunkLifecycle({
     onChunkDisposed(chunk) {
         water.disposeChunk(chunk);
@@ -197,8 +214,24 @@ function warmUpWorldBeforeStart(focusPosition) {
 }
 
 const mode = gameMode === GAME_MODE.LOCAL_COOP
-    ? createLocalCoopMode({ scene, camera, renderer, getHeight, requestStart: warmUpWorldBeforeStart })
-    : createSinglePlayerMode({ scene, camera, renderer, getHeight, requestStart: warmUpWorldBeforeStart });
+    ? createLocalCoopMode({
+        scene,
+        camera,
+        renderer,
+        getHeight,
+        getSample,
+        resolveTreeCollision: trees.resolveTrunkCollision,
+        requestStart: warmUpWorldBeforeStart
+    })
+    : createSinglePlayerMode({
+        scene,
+        camera,
+        renderer,
+        getHeight,
+        getSample,
+        resolveTreeCollision: trees.resolveTrunkCollision,
+        requestStart: warmUpWorldBeforeStart
+    });
 
 if (mode.player) {
     mode.player.position.set(0, getHeight(0, 0) + CONFIG.terreno.alturaOlhos + 2, 0);
@@ -213,6 +246,12 @@ function loop() {
     dayNightCycle.update(delta);
 
     const modeState = mode.update(delta);
+    for (const shot of modeState.shots ?? []) {
+        arrows.shoot(shot);
+    }
+    arrows.update(delta, modeState.players ?? []);
+    combatHud.update(modeState.players ?? []);
+
     if (modeState.isActive) {
         updateChunksForPlayers(modeState.focuses, modeState.isMoving);
     }
@@ -235,6 +274,8 @@ window.addEventListener('beforeunload', () => {
     water.dispose();
     grass.dispose();
     trees.dispose();
+    arrows.dispose();
+    combatHud.dispose();
     mode.dispose();
     dispose();
 });

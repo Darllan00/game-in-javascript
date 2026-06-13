@@ -52,6 +52,125 @@ body {
     z-index: 12;
 }
 
+#combat-hud {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 12;
+}
+
+.combat-hud-viewport {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+}
+
+.combat-hud-cluster {
+    position: absolute;
+    left: 14px;
+    bottom: 14px;
+    width: min(280px, calc(100% - 28px));
+}
+
+.combat-hud-player {
+    display: grid;
+    grid-template-columns: minmax(112px, 1fr) 92px;
+    gap: 4px 8px;
+    align-items: center;
+    padding: 7px 8px;
+    border-radius: 4px;
+    background: rgba(0, 0, 0, 0.34);
+    color: rgba(255, 255, 255, 0.9);
+    font: 12px/1.2 Arial, sans-serif;
+}
+
+.combat-hud-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.combat-hud-health-track {
+    height: 7px;
+    overflow: hidden;
+    background: rgba(255, 255, 255, 0.18);
+}
+
+.combat-hud-health-fill {
+    width: 100%;
+    height: 100%;
+    background: rgb(178, 38, 28);
+    transition: width 90ms linear;
+}
+
+.combat-hud-breath-track {
+    grid-column: 1 / -1;
+    display: none;
+    height: 5px;
+    overflow: hidden;
+    background: rgba(255, 255, 255, 0.14);
+}
+
+.combat-hud-dash-track {
+    grid-column: 1 / -1;
+    height: 5px;
+    overflow: hidden;
+    background: rgba(255, 255, 255, 0.14);
+}
+
+.combat-hud-dash-fill {
+    width: 100%;
+    height: 100%;
+    background: rgb(236, 185, 74);
+    transition: width 80ms linear;
+}
+
+.combat-hud-breath-fill {
+    width: 100%;
+    height: 100%;
+    background: rgb(77, 172, 213);
+    transition: width 80ms linear;
+}
+
+.combat-hud-player.is-underwater .combat-hud-breath-track {
+    display: block;
+}
+
+.combat-hud-player.is-dashing .combat-hud-dash-fill {
+    background: rgb(255, 226, 120);
+}
+
+.combat-hud-status {
+    grid-column: 1 / -1;
+    min-height: 1em;
+    color: rgba(255, 255, 255, 0.72);
+}
+
+.combat-hud-player.is-dead .combat-hud-health-fill {
+    background: rgb(58, 58, 58);
+}
+
+.combat-death-screen {
+    position: absolute;
+    inset: 0;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    background: rgba(40, 0, 0, 0.32);
+}
+
+.combat-hud-viewport.is-dead .combat-death-screen {
+    display: flex;
+}
+
+.combat-death-title {
+    padding: 12px 16px;
+    border: 1px solid rgba(255, 255, 255, 0.24);
+    background: rgba(0, 0, 0, 0.42);
+    color: rgba(255, 255, 255, 0.92);
+    font: 700 22px/1.2 Arial, sans-serif;
+}
+
 #menu {
     position: absolute;
     top: 0;

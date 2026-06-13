@@ -5,7 +5,8 @@ export const keys = {
     a: false,
     s: false,
     d: false,
-    space: false
+    space: false,
+    shift: false
 };
 
 export function setupControls(camera, options = {}) {
@@ -19,9 +20,9 @@ export function setupControls(camera, options = {}) {
         if (isStarting || controls.isLocked) return;
         isStarting = true;
         try {
+            controls.lock();
             const startResult = options.requestStart?.(player);
             if (startResult) await startResult;
-            controls.lock();
         } finally {
             isStarting = false;
         }
@@ -41,12 +42,20 @@ export function setupControls(camera, options = {}) {
     });
 
     window.addEventListener('keydown', (e) => {
-        const k = e.code === 'Space' ? 'space' : e.key.toLowerCase();
+        const k = e.code === 'Space'
+            ? 'space'
+            : e.code === 'ShiftLeft' || e.code === 'ShiftRight'
+                ? 'shift'
+                : e.key.toLowerCase();
         if (k in keys) keys[k] = true;
     });
 
     window.addEventListener('keyup', (e) => {
-        const k = e.code === 'Space' ? 'space' : e.key.toLowerCase();
+        const k = e.code === 'Space'
+            ? 'space'
+            : e.code === 'ShiftLeft' || e.code === 'ShiftRight'
+                ? 'shift'
+                : e.key.toLowerCase();
         if (k in keys) keys[k] = false;
     });
 

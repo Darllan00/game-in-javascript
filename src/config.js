@@ -125,15 +125,54 @@ export const CONFIG = {
         material: {
             transparenciaRasa: 0.42,
             transparenciaFunda: 0.68,
-            velocidadeOnda: 0.992,
-            amplitudeOnda: 0.6
+            velocidadeOnda: 0.92,
+            amplitudeOnda: 0.6,
+            reflexoCeu: 0.42,
+            brilhoSol: 1.65,
+            brilhoLua: 0.75,
+            espuma: 0.2,
+            contrasteProfundidade: 1.08
         }
     },
     movimento: {
-        velocidade: 205,
+        velocidade: 25,
         gravidade: 30,
         pulo: 50,
         alturaMaximaPasso: 1.35
+    },
+    mecanicas: {
+        jogador: {
+            vidaMaxima: 100,
+            raioColisao: 0.55,
+            alturaColisao: 2.0
+        },
+        afogamento: {
+            tempoSeguro: 10,
+            danoPorSegundo: 12.5,
+            margemCabeca: 0.08
+        },
+        queda: {
+            alturaSegura: 42,
+            danoPorMetro: 4.5,
+            danoMaximo: 100
+        },
+        arco: {
+            niveis: 4,
+            tempoPorNivel: 0.5,
+            velocidades: [46, 64, 84, 108],
+            danos: [15, 25, 37.5, 50],
+            gravidade: 13,
+            tempoVida: 11,
+            maxFlechasAtivas: 64,
+            raioColisao: 0.18,
+            distanciaSpawn: 1.05,
+            tempoCravadaNoTerreno: 24
+        },
+        dash: {
+            multiplicadorVelocidade: 3,
+            duracao: 0.24,
+            cooldown: 2.4
+        }
     },
     renderizacao: {
         qualidade: 'balanced',
@@ -152,8 +191,29 @@ export const CONFIG = {
             }
         }
     },
+    iluminacao: {
+        toneMapping: 'aces',
+        exposicao: 1.05,
+        sombras: {
+            ativa: true,
+            tipo: 'soft',
+            tamanhoMapa: 1024,
+            distancia: 110,
+            distanciaLuz: 320,
+            profundidade: 620,
+            bias: -0.00018,
+            normalBias: 0.045,
+            atualizacaoManual: true,
+            atualizacaoMs: 140,
+            focoGrade: 8,
+            terrenoRecebe: true,
+            terrenoProjeta: true,
+            arvoresRecebem: true,
+            arvoresProjetam: true
+        }
+    },
     cicloDiaNoite: {
-        duracaoMinutos: 20,
+        duracaoMinutos: 2,
         atualizacoesPorSegundo: 12,
         raioAstros: 900,
         quantidadeEstrelas: 300
@@ -230,6 +290,8 @@ export const CONFIG = {
         chancePorTentativa: 0.75,
         distanciaMinima: 6,
         raioBloqueio: 2.6,
+        raioColisaoTronco: 1.05,
+        alturaColisaoTronco: 8.0,
         escalaMin: 1.25,
         escalaMax: 1.75,
         alturaMaximaTerreno: 34,

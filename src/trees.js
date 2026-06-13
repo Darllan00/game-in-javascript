@@ -20,6 +20,7 @@ const tempEuler = new THREE.Euler(0, 0, 0, 'YXZ');
 const hiddenLodMatrix = new THREE.Matrix4().makeScale(0, 0, 0);
 const assetBounds = new THREE.Box3();
 const treeWindDirection = new THREE.Vector2(CONFIG.vento.direcaoX, CONFIG.vento.direcaoZ).normalize();
+const SHADOW_CONFIG = CONFIG.iluminacao?.sombras ?? {};
 
 function hash01(x, z, salt = 0) {
     const value = Math.sin(x * 127.1 + z * 311.7 + salt * 74.7) * 43758.5453123;
@@ -37,6 +38,24 @@ function isInsideWorld(cx, cz) {
 
 function getChunkCoord(value) {
     return Math.floor(value / CHUNK_SIZE);
+}
+
+function segmentPointDistanceSq2D(ax, az, bx, bz, px, pz) {
+    const dx = bx - ax;
+    const dz = bz - az;
+    const lengthSq = dx * dx + dz * dz;
+    if (lengthSq <= 0.000001) {
+        const pointDx = px - ax;
+        const pointDz = pz - az;
+        return pointDx * pointDx + pointDz * pointDz;
+    }
+
+    const t = Math.max(0, Math.min(1, ((px - ax) * dx + (pz - az) * dz) / lengthSq));
+    const closestX = ax + dx * t;
+    const closestZ = az + dz * t;
+    const pointDx = px - closestX;
+    const pointDz = pz - closestZ;
+    return pointDx * pointDx + pointDz * pointDz;
 }
 
 function getTreeConfig() {
@@ -116,7 +135,8 @@ function createRuntimeMaterial(sourceMaterial, role, animated = true) {
     });
 
     material.name = `${sourceMaterial?.name ?? role}-${role}`;
-    material.toneMapped = false;
+    material.toneMapped = true;
+    material.shadowSide = role === 'leaves' ? THREE.DoubleSide : THREE.FrontSide;
 
     if (animated && role === 'leaves' && getTreeConfig().vento?.ativo !== false) {
         addTreeWindToMaterial(material);
@@ -257,6 +277,7 @@ export function createTrees(scene, getTerrainSample, diagnostics, options = {}) 
     const treeConfig = getTreeConfig();
     const getChunkGroup = options.getChunkGroup ?? (() => null);
     const getChunkVegetationMetadata = options.getChunkVegetationMetadata ?? (() => null);
+    const requestShadowUpdate = options.requestShadowUpdate ?? (() => {});
     const activeBatches = new Map();
     const queuedChunkKeys = new Set();
     const emptyChunkKeys = new Set();
@@ -265,6 +286,7 @@ export function createTrees(scene, getTerrainSample, diagnostics, options = {}) 
     const emptyLodKeys = new Set();
     const rawCandidateCache = new Map();
     const placementCache = new Map();
+    const trunkColliderCache = new Map();
     let buildQueue = [];
     let lodBuildQueue = [];
     let assetParts = [];
@@ -281,6 +303,9 @@ export function createTrees(scene, getTerrainSample, diagnostics, options = {}) 
             updateForPlayers() {},
             isPositionBlocked() { return false; },
             getBlockersForChunk() { return []; },
+            getTrunkCollidersNear() { return []; },
+            resolveTrunkCollision() { return false; },
+            findTrunkImpact() { return false; },
             setVisibilityForFocus() {},
             restoreVisibility() {},
             disposeChunk() {},
@@ -450,6 +475,106 @@ export function createTrees(scene, getTerrainSample, diagnostics, options = {}) 
         return false;
     }
 
+    function getTrunkRadius(tree) {
+        return Math.max(0, treeConfig.raioColisaoTronco ?? 1.0) * (tree.scale ?? 1);
+    }
+
+    function getTrunkHeight(tree) {
+        return Math.max(0.1, treeConfig.alturaColisaoTronco ?? 8.0) * (tree.scale ?? 1);
+    }
+
+    function getTrunkCollidersForChunk(cx, cz) {
+        const key = getChunkKey(cx, cz);
+        const cached = trunkColliderCache.get(key);
+        if (cached) return cached;
+
+        const colliders = getTreePlacements(cx, cz).map((tree) => ({
+            x: tree.x,
+            z: tree.z,
+            yMin: tree.height - Math.max(0, treeConfig.enterraNoTerreno ?? 0),
+            yMax: tree.height + getTrunkHeight(tree),
+            radius: getTrunkRadius(tree)
+        }));
+        rememberLimitedMapValue(trunkColliderCache, key, colliders, TREE_PLACEMENT_CACHE_LIMIT);
+        return colliders;
+    }
+
+    function getTrunkCollidersNear(worldX, worldZ, radius = 0) {
+        const colliders = [];
+        const maxRadius = (treeConfig.raioColisaoTronco ?? 1.0) * (treeConfig.escalaMax ?? 1) + radius;
+        const chunkRange = Math.max(1, Math.ceil(maxRadius / CHUNK_SIZE));
+        const chunkX = getChunkCoord(worldX);
+        const chunkZ = getChunkCoord(worldZ);
+
+        for (let dz = -chunkRange; dz <= chunkRange; dz++) {
+            for (let dx = -chunkRange; dx <= chunkRange; dx++) {
+                colliders.push(...getTrunkCollidersForChunk(chunkX + dx, chunkZ + dz));
+            }
+        }
+
+        return colliders;
+    }
+
+    function resolveTrunkCollision(position, playerRadius = 0.55) {
+        if (!position) return false;
+
+        let changed = false;
+        const colliders = getTrunkCollidersNear(position.x, position.z, playerRadius);
+        for (const trunk of colliders) {
+            const minDistance = trunk.radius + playerRadius;
+            const dx = position.x - trunk.x;
+            const dz = position.z - trunk.z;
+            const distanceSq = dx * dx + dz * dz;
+            if (distanceSq >= minDistance * minDistance) continue;
+
+            if (distanceSq <= 0.000001) {
+                position.x += minDistance;
+            } else {
+                const distance = Math.sqrt(distanceSq);
+                const push = minDistance - distance;
+                position.x += (dx / distance) * push;
+                position.z += (dz / distance) * push;
+            }
+            changed = true;
+        }
+
+        return changed;
+    }
+
+    function findTrunkImpact(previousPosition, nextPosition, radius = 0, output = null) {
+        const minX = Math.min(previousPosition.x, nextPosition.x) - radius;
+        const maxX = Math.max(previousPosition.x, nextPosition.x) + radius;
+        const minZ = Math.min(previousPosition.z, nextPosition.z) - radius;
+        const maxZ = Math.max(previousPosition.z, nextPosition.z) + radius;
+        const centerX = (minX + maxX) * 0.5;
+        const centerZ = (minZ + maxZ) * 0.5;
+        const searchRadius = Math.max(maxX - minX, maxZ - minZ) * 0.5 + radius;
+        const colliders = getTrunkCollidersNear(centerX, centerZ, searchRadius);
+
+        for (const trunk of colliders) {
+            if (Math.max(previousPosition.y, nextPosition.y) < trunk.yMin) continue;
+            if (Math.min(previousPosition.y, nextPosition.y) > trunk.yMax) continue;
+
+            const hitRadius = trunk.radius + radius;
+            const distanceSq = segmentPointDistanceSq2D(
+                previousPosition.x,
+                previousPosition.z,
+                nextPosition.x,
+                nextPosition.z,
+                trunk.x,
+                trunk.z
+            );
+            if (distanceSq > hitRadius * hitRadius) continue;
+
+            if (output) {
+                output.copy(nextPosition);
+            }
+            return true;
+        }
+
+        return false;
+    }
+
     function getClosestDistanceToFocus(cx, cz, focuses) {
         let closestDistance = Infinity;
         for (const focus of focuses) {
@@ -514,8 +639,8 @@ export function createTrees(scene, getTerrainSample, diagnostics, options = {}) 
             mesh.name = `trees-${part.role}-${item.key}`;
             mesh.position.set(item.cx * CHUNK_SIZE, 0, item.cz * CHUNK_SIZE);
             mesh.frustumCulled = true;
-            mesh.castShadow = false;
-            mesh.receiveShadow = false;
+            mesh.castShadow = SHADOW_CONFIG.arvoresProjetam === true;
+            mesh.receiveShadow = SHADOW_CONFIG.arvoresRecebem === true;
             mesh.userData.treePart = part;
 
             for (let i = 0; i < placements.length; i++) {
@@ -540,6 +665,7 @@ export function createTrees(scene, getTerrainSample, diagnostics, options = {}) 
             meshes,
             isAnimated
         });
+        requestShadowUpdate();
         return true;
     }
 
@@ -901,6 +1027,7 @@ export function createTrees(scene, getTerrainSample, diagnostics, options = {}) 
         emptyLodKeys.clear();
         rawCandidateCache.clear();
         placementCache.clear();
+        trunkColliderCache.clear();
 
         const materials = new Set();
         for (const part of [...assetParts, ...lodAssetParts]) {
@@ -953,6 +1080,9 @@ export function createTrees(scene, getTerrainSample, diagnostics, options = {}) 
         updateForPlayers,
         isPositionBlocked,
         getBlockersForChunk,
+        getTrunkCollidersNear,
+        resolveTrunkCollision,
+        findTrunkImpact,
         setVisibilityForFocus,
         restoreVisibility,
         disposeChunk,

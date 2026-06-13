@@ -1,4 +1,5 @@
 export const state = {
     velocidadeY: 0,
-    noChao: false
+    noChao: false,
+    fallPeakY: null
 };

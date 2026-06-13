@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { CONFIG } from './config.js';
+import { COLORS, CONFIG } from './config.js';
 
 const FULL_TURN = Math.PI * 2;
 const SUN_SIZE = 340;
@@ -10,12 +10,14 @@ const tempColorB = new THREE.Color();
 const sunDirection = new THREE.Vector3();
 const moonDirection = new THREE.Vector3();
 const cameraWorldPosition = new THREE.Vector3();
+const shadowFocusPosition = new THREE.Vector3();
 const sunDayColor = new THREE.Color(0xfff2d2);
 const sunHorizonColor = new THREE.Color(0xffa25f);
 const skyDayColor = new THREE.Color(0x91c7ff);
 const skyHorizonColor = new THREE.Color(0xffc38a);
 const skyNightGroundColor = new THREE.Color(0x1c2230);
 const skyDayGroundColor = new THREE.Color(0x5a5138);
+const moonColor = new THREE.Color(0xb7c9ff);
 
 const SKY_STOPS = [
     { t: 0.00, color: new THREE.Color(0x07101f) },
@@ -109,16 +111,62 @@ function createStarField(count, radius) {
     return new THREE.Points(geometry, material);
 }
 
-export function createDayNightCycle(scene, camera) {
+export function createDayNightCycle(scene, camera, renderer = null) {
     const cycleConfig = CONFIG.cicloDiaNoite;
+    const shadowConfig = CONFIG.iluminacao?.sombras ?? {};
+    const shadowsEnabled = shadowConfig.ativa === true;
+    const manualShadowUpdates = shadowsEnabled && shadowConfig.atualizacaoManual === true && renderer?.shadowMap;
+    const shadowUpdateInterval = (shadowConfig.atualizacaoMs ?? 140) / 1000;
+    const shadowFocusGrid = Math.max(1, shadowConfig.focoGrade ?? 8);
+    const shadowLightDistance = shadowConfig.distanciaLuz ?? 320;
+    const shadowCameraFar = Math.max(
+        shadowConfig.profundidade ?? shadowLightDistance + (shadowConfig.distancia ?? 110) * 2.5,
+        shadowLightDistance + 20
+    );
     const cycleDurationSeconds = cycleConfig.duracaoMinutos * 60;
     const updateInterval = 1 / cycleConfig.atualizacoesPorSegundo;
     const radius = cycleConfig.raioAstros;
     let elapsedSeconds = cycleDurationSeconds * 0.34;
     let accumulatedLightUpdate = updateInterval;
+    let accumulatedShadowUpdate = shadowUpdateInterval;
+    let shadowFocusChanged = true;
+    let lastShadowFocusX = Infinity;
+    let lastShadowFocusZ = Infinity;
+    const lightingState = {
+        version: 0,
+        timeOfDay: 0,
+        dayAmount: 1,
+        nightAmount: 0,
+        horizonWarmth: 0,
+        lightLevel: 1,
+        sunDirection: new THREE.Vector3(0, 1, 0),
+        moonDirection: new THREE.Vector3(0, -1, 0),
+        sunColor: sunDayColor.clone(),
+        moonColor: moonColor.clone(),
+        skyColor: skyDayColor.clone(),
+        groundColor: skyDayGroundColor.clone(),
+        fogColor: COLORS.dia.clone(),
+        sunIntensity: 1,
+        moonIntensity: 0,
+        skyIntensity: 0.7
+    };
 
     const sunLight = new THREE.DirectionalLight(0xfff0cf, 1.25);
-    sunLight.castShadow = false;
+    sunLight.castShadow = shadowsEnabled;
+    if (shadowsEnabled) {
+        const shadowDistance = shadowConfig.distancia ?? 110;
+        const shadowMapSize = shadowConfig.tamanhoMapa ?? 1536;
+        sunLight.shadow.mapSize.set(shadowMapSize, shadowMapSize);
+        sunLight.shadow.camera.left = -shadowDistance;
+        sunLight.shadow.camera.right = shadowDistance;
+        sunLight.shadow.camera.top = shadowDistance;
+        sunLight.shadow.camera.bottom = -shadowDistance;
+        sunLight.shadow.camera.near = 1;
+        sunLight.shadow.camera.far = shadowCameraFar;
+        sunLight.shadow.bias = shadowConfig.bias ?? -0.00018;
+        sunLight.shadow.normalBias = shadowConfig.normalBias ?? 0.045;
+        sunLight.shadow.camera.updateProjectionMatrix();
+    }
 
     const moonLight = new THREE.DirectionalLight(0x9db7ff, 0.08);
     moonLight.castShadow = false;
@@ -152,6 +200,13 @@ export function createDayNightCycle(scene, camera) {
 
     scene.add(sunLight, sunLight.target, moonLight, moonLight.target, skyLight, sun, moon, stars);
 
+    function requestShadowUpdate() {
+        if (manualShadowUpdates) {
+            renderer.shadowMap.needsUpdate = true;
+            accumulatedShadowUpdate = 0;
+        }
+    }
+
     function updateCelestialPositions(timeOfDay) {
         const sunAngle = timeOfDay * FULL_TURN - Math.PI / 2;
         const moonAngle = sunAngle + Math.PI;
@@ -164,10 +219,26 @@ export function createDayNightCycle(scene, camera) {
         moon.position.copy(cameraWorldPosition).addScaledVector(moonDirection, radius);
         stars.position.copy(cameraWorldPosition);
 
-        sunLight.position.copy(cameraWorldPosition).addScaledVector(sunDirection, 120);
-        sunLight.target.position.copy(cameraWorldPosition);
+        if (shadowsEnabled) {
+            const focusX = Math.round(cameraWorldPosition.x / shadowFocusGrid) * shadowFocusGrid;
+            const focusZ = Math.round(cameraWorldPosition.z / shadowFocusGrid) * shadowFocusGrid;
+            shadowFocusChanged = shadowFocusChanged
+                || Math.abs(focusX - lastShadowFocusX) >= shadowFocusGrid
+                || Math.abs(focusZ - lastShadowFocusZ) >= shadowFocusGrid;
+            lastShadowFocusX = focusX;
+            lastShadowFocusZ = focusZ;
+            shadowFocusPosition.set(focusX, cameraWorldPosition.y, focusZ);
+        } else {
+            shadowFocusPosition.copy(cameraWorldPosition);
+        }
+
+        sunLight.position.copy(shadowFocusPosition).addScaledVector(sunDirection, shadowLightDistance);
+        sunLight.target.position.copy(shadowFocusPosition);
         moonLight.position.copy(cameraWorldPosition).addScaledVector(moonDirection, 120);
         moonLight.target.position.copy(cameraWorldPosition);
+
+        lightingState.sunDirection.copy(sunDirection);
+        lightingState.moonDirection.copy(moonDirection);
     }
 
     function updateLighting(timeOfDay) {
@@ -189,6 +260,9 @@ export function createDayNightCycle(scene, camera) {
 
         sunLight.intensity = THREE.MathUtils.lerp(0, 1.38, dayAmount);
         sunLight.color.copy(sunDayColor).lerp(sunHorizonColor, horizonWarmth * 0.45);
+        const wasCastingShadow = sunLight.castShadow;
+        sunLight.castShadow = shadowsEnabled && dayAmount > 0.04;
+        if (sunLight.castShadow !== wasCastingShadow) requestShadowUpdate();
 
         moonLight.intensity = THREE.MathUtils.lerp(0.01, 0.18, nightAmount);
         skyLight.intensity = THREE.MathUtils.lerp(0.18, 0.76, dayAmount) + nightAmount * 0.08;
@@ -198,6 +272,21 @@ export function createDayNightCycle(scene, camera) {
         sun.material.opacity = smooth01((sunHeight + 0.03) / 0.12);
         moon.material.opacity = smooth01((moonHeight + 0.03) / 0.12) * (1 - dayAmount * 0.72);
         stars.material.opacity = clamp01(nightAmount * 0.82);
+
+        lightingState.version++;
+        lightingState.timeOfDay = timeOfDay;
+        lightingState.dayAmount = dayAmount;
+        lightingState.nightAmount = nightAmount;
+        lightingState.horizonWarmth = horizonWarmth;
+        lightingState.lightLevel = THREE.MathUtils.clamp(0.16 + dayAmount * 0.86 + nightAmount * 0.18, 0.16, 1.08);
+        lightingState.sunColor.copy(sunLight.color);
+        lightingState.moonColor.copy(moonColor);
+        lightingState.skyColor.copy(skyLight.color);
+        lightingState.groundColor.copy(skyLight.groundColor);
+        lightingState.fogColor.copy(scene.fog.color);
+        lightingState.sunIntensity = sunLight.intensity;
+        lightingState.moonIntensity = moonLight.intensity;
+        lightingState.skyIntensity = skyLight.intensity;
     }
 
     function update(deltaSeconds) {
@@ -210,6 +299,15 @@ export function createDayNightCycle(scene, camera) {
         if (accumulatedLightUpdate >= updateInterval) {
             accumulatedLightUpdate = 0;
             updateLighting(timeOfDay);
+        }
+
+        if (manualShadowUpdates && sunLight.castShadow) {
+            accumulatedShadowUpdate += deltaSeconds;
+            if (shadowFocusChanged || accumulatedShadowUpdate >= shadowUpdateInterval) {
+                requestShadowUpdate();
+                accumulatedShadowUpdate = 0;
+                shadowFocusChanged = false;
+            }
         }
     }
 
@@ -224,6 +322,11 @@ export function createDayNightCycle(scene, camera) {
     }
 
     update(0);
+    requestShadowUpdate();
 
-    return { update, dispose };
+    function getLightingState() {
+        return lightingState;
+    }
+
+    return { update, dispose, getLightingState, requestShadowUpdate };
 }

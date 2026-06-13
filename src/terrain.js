@@ -43,6 +43,7 @@ const RETIRED_CHUNK_CACHE_LIMIT = 160;
 const GRASS_CHUNK_PROBE_STEPS = 4;
 const MACRO_CHUNK_CONFIG = CONFIG.terreno.macroSuperChunks ?? {};
 const TERRAIN_DATA_MAP_CONFIG = CONFIG.terreno.mapaDados ?? {};
+const SHADOW_CONFIG = CONFIG.iluminacao?.sombras ?? {};
 const MACRO_CHUNKS_ENABLED = MACRO_CHUNK_CONFIG.ativo !== false && MACRO_CHUNK_CONFIG.renderizar !== false;
 const MACRO_CHUNK_SIZE_IN_CHUNKS = Math.max(1, MACRO_CHUNK_CONFIG.tamanhoEmChunks ?? 128);
 const MACRO_CHUNK_WORLD_SIZE = MACRO_CHUNK_SIZE_IN_CHUNKS * CHUNK_SIZE;
@@ -176,6 +177,7 @@ function createChunkSampler(sharedSampleCache, sampleGrid = null, sampleFactory 
 
 export function createTerrain(scene, diagnostics, options = {}) {
     const terrainDataMap = options.terrainDataMap ?? null;
+    const requestShadowUpdate = options.requestShadowUpdate ?? (() => {});
     const terrainMaterial = createTerrainMaterial();
     const superChunkTerrainMaterial = createSuperChunkTerrainMaterial({
         chunkSize: CHUNK_SIZE,
@@ -1029,6 +1031,8 @@ export function createTerrain(scene, diagnostics, options = {}) {
         );
         const terrainMesh = new THREE.Mesh(geometry, terrainMaterial);
         terrainMesh.position.set(startX + width / 2, 0, startZ + depth / 2);
+        terrainMesh.receiveShadow = SHADOW_CONFIG.terrenoRecebe === true;
+        terrainMesh.castShadow = SHADOW_CONFIG.terrenoProjeta === true;
 
         return {
             terrainStep,
@@ -1100,6 +1104,7 @@ export function createTerrain(scene, diagnostics, options = {}) {
         diagnostics.setCounter('loadedChunks', chunks.size);
         diagnostics.setCounter('visibleChunks', [...chunks.values()].filter((item) => item.group.visible).length);
         markSuperChunkMaskDirty();
+        requestShadowUpdate();
         return chunk;
     }
 

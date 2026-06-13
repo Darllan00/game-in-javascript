@@ -20,6 +20,8 @@ function rememberLimitedSetValue(set, value, limit) {
 
 function createWaterMaterial() {
     const materialConfig = WATER_CONFIG.material ?? {};
+    const sunDirection = new THREE.Vector3(0, 1, 0);
+    const moonDirection = new THREE.Vector3(0, -1, 0);
     return new THREE.ShaderMaterial({
         uniforms: THREE.UniformsUtils.merge([
             THREE.UniformsLib.fog,
@@ -31,7 +33,22 @@ function createWaterMaterial() {
                 uDeepAlpha: { value: materialConfig.transparenciaFunda ?? 0.78 },
                 uShallowColor: { value: new THREE.Color(0x6fc7d8) },
                 uDeepColor: { value: new THREE.Color(0x146286) },
-                uFoamColor: { value: new THREE.Color(0xd8f4ed) }
+                uFoamColor: { value: new THREE.Color(0xd8f4ed) },
+                uSunDirection: { value: sunDirection },
+                uMoonDirection: { value: moonDirection },
+                uSunColor: { value: new THREE.Color(0xfff0cf) },
+                uMoonColor: { value: new THREE.Color(0xb7c9ff) },
+                uSkyColor: { value: new THREE.Color(0x8fc7ff) },
+                uSunIntensity: { value: 1 },
+                uMoonIntensity: { value: 0 },
+                uAmbientIntensity: { value: 0.7 },
+                uLightLevel: { value: 1 },
+                uHorizonWarmth: { value: 0 },
+                uSkyReflectionStrength: { value: materialConfig.reflexoCeu ?? 0.42 },
+                uSunSpecularStrength: { value: materialConfig.brilhoSol ?? 1.65 },
+                uMoonSpecularStrength: { value: materialConfig.brilhoLua ?? 0.75 },
+                uFoamStrength: { value: materialConfig.espuma ?? 0.2 },
+                uDepthContrast: { value: materialConfig.contrasteProfundidade ?? 1.08 }
             }
         ]),
         vertexShader: `
@@ -47,6 +64,10 @@ function createWaterMaterial() {
             varying float vCoverage;
             varying float vFoam;
             varying vec2 vWorldXZ;
+            varying vec3 vWorldPosition;
+            varying vec3 vWaterNormal;
+            varying float vRipple;
+            varying float vEdgeNoise;
 
             #include <fog_pars_vertex>
 
@@ -54,11 +75,18 @@ function createWaterMaterial() {
                 vec3 transformedPosition = position;
                 vec4 worldBase = modelMatrix * vec4(position, 1.0);
                 vec2 flow = length(aFlow) > 0.001 ? normalize(aFlow) : vec2(0.78, 0.38);
-                float waveA = sin(dot(worldBase.xz, flow) * 0.065 + uTime * uWaveSpeed);
-                float waveB = sin(dot(worldBase.xz, vec2(-flow.y, flow.x)) * 0.041 + uTime * uWaveSpeed * 0.73);
+                vec2 crossFlow = vec2(-flow.y, flow.x);
+                float phaseA = dot(worldBase.xz, flow) * 0.065 + uTime * uWaveSpeed;
+                float phaseB = dot(worldBase.xz, crossFlow) * 0.041 + uTime * uWaveSpeed * 0.73;
+                float waveA = sin(phaseA);
+                float waveB = sin(phaseB);
                 float wave = waveA * 0.65 + waveB * 0.35;
                 float waveMask = smoothstep(0.38, 0.82, aCoverage);
                 transformedPosition.y -= (wave * 0.5 + 0.5) * uWaveAmplitude * waveMask;
+                vec2 waveGradient = (
+                    flow * cos(phaseA) * 0.065 * 0.65
+                    + crossFlow * cos(phaseB) * 0.041 * 0.35
+                ) * uWaveAmplitude * waveMask;
 
                 vec4 worldPosition = modelMatrix * vec4(transformedPosition, 1.0);
                 vec4 mvPosition = viewMatrix * worldPosition;
@@ -68,6 +96,14 @@ function createWaterMaterial() {
                 vCoverage = aCoverage;
                 vFoam = 1.0 - smoothstep(0.16, 0.78, aCoverage);
                 vWorldXZ = worldPosition.xz;
+                vWorldPosition = worldPosition.xyz;
+                vWaterNormal = normalize(vec3(waveGradient.x, 1.0, waveGradient.y));
+                vRipple = sin(worldPosition.x * 0.18 + worldPosition.z * 0.11) * 0.025
+                    + sin(worldPosition.x * -0.07 + worldPosition.z * 0.21) * 0.018;
+                vEdgeNoise = (
+                    sin(worldPosition.x * 0.37 + worldPosition.z * 0.19 + uTime * 0.22)
+                    + sin(worldPosition.x * -0.23 + worldPosition.z * 0.31 - uTime * 0.17)
+                ) * 0.5;
 
                 #include <fog_vertex>
             }
@@ -78,22 +114,74 @@ function createWaterMaterial() {
             uniform vec3 uFoamColor;
             uniform float uShallowAlpha;
             uniform float uDeepAlpha;
+            uniform vec3 uSunDirection;
+            uniform vec3 uMoonDirection;
+            uniform vec3 uSunColor;
+            uniform vec3 uMoonColor;
+            uniform vec3 uSkyColor;
+            uniform float uSunIntensity;
+            uniform float uMoonIntensity;
+            uniform float uAmbientIntensity;
+            uniform float uLightLevel;
+            uniform float uHorizonWarmth;
+            uniform float uSkyReflectionStrength;
+            uniform float uSunSpecularStrength;
+            uniform float uMoonSpecularStrength;
+            uniform float uFoamStrength;
+            uniform float uDepthContrast;
 
             varying float vDepth;
             varying float vCoverage;
             varying float vFoam;
             varying vec2 vWorldXZ;
+            varying vec3 vWorldPosition;
+            varying vec3 vWaterNormal;
+            varying float vRipple;
+            varying float vEdgeNoise;
 
             #include <fog_pars_fragment>
 
             void main() {
-                float depthFactor = smoothstep(0.15, 3.8, vDepth);
-                float ripple = sin(vWorldXZ.x * 0.18 + vWorldXZ.y * 0.11) * 0.025
-                    + sin(vWorldXZ.x * -0.07 + vWorldXZ.y * 0.21) * 0.018;
-                vec3 waterColor = mix(uShallowColor, uDeepColor, depthFactor);
-                waterColor += ripple;
-                waterColor = mix(waterColor, uFoamColor, vFoam * 0.22);
-                float edgeFade = smoothstep(0.001, 0.34, vCoverage) * smoothstep(0.001, 0.22, vDepth);
+                float depthFactor = pow(smoothstep(0.15, 4.8, vDepth), uDepthContrast);
+                float noisyCoverage = clamp(
+                    vCoverage + vEdgeNoise * 0.075 * (1.0 - smoothstep(0.28, 0.95, vCoverage)),
+                    0.0,
+                    1.0
+                );
+                vec3 microNormal = vec3(
+                    vEdgeNoise * 0.035,
+                    0.0,
+                    -vEdgeNoise * 0.028
+                );
+                vec3 normal = normalize(vWaterNormal + microNormal);
+                vec3 viewDir = normalize(cameraPosition - vWorldPosition);
+                vec3 sunDir = normalize(uSunDirection);
+                vec3 moonDir = normalize(uMoonDirection);
+                float sunFacing = max(dot(normal, sunDir), 0.0);
+                float moonFacing = max(dot(normal, moonDir), 0.0);
+                float fresnel = pow(1.0 - max(dot(normal, viewDir), 0.0), 3.0);
+                float sunSpec = pow(max(dot(normal, normalize(sunDir + viewDir)), 0.0), 112.0)
+                    * uSunIntensity * smoothstep(0.20, 0.85, noisyCoverage);
+                float moonSpec = pow(max(dot(normal, normalize(moonDir + viewDir)), 0.0), 86.0)
+                    * uMoonIntensity * smoothstep(0.25, 0.9, noisyCoverage);
+                float broadSun = pow(max(dot(reflect(-sunDir, normal), viewDir), 0.0), 18.0)
+                    * uSunIntensity * smoothstep(0.35, 1.0, noisyCoverage);
+                vec3 baseColor = mix(uShallowColor, uDeepColor, depthFactor);
+                baseColor += vRipple;
+                vec3 ambientWater = baseColor * (0.42 + uLightLevel * 0.55);
+                vec3 directWater = baseColor * (
+                    sunFacing * uSunIntensity * 0.28
+                    + moonFacing * uMoonIntensity * 0.18
+                    + uAmbientIntensity * 0.12
+                );
+                vec3 skyReflection = mix(uSkyColor, uSunColor, clamp(sunSpec * 0.18 + uHorizonWarmth * 0.18, 0.0, 0.45));
+                vec3 waterColor = ambientWater + directWater;
+                waterColor = mix(waterColor, skyReflection, fresnel * uSkyReflectionStrength);
+                waterColor += uSunColor * (sunSpec * uSunSpecularStrength + broadSun * 0.22);
+                waterColor += uMoonColor * moonSpec * uMoonSpecularStrength;
+                float foamMask = vFoam * (0.72 + vEdgeNoise * 0.16) * smoothstep(0.03, 0.44, noisyCoverage);
+                waterColor = mix(waterColor, uFoamColor, foamMask * uFoamStrength);
+                float edgeFade = smoothstep(0.001, 0.34, noisyCoverage) * smoothstep(0.001, 0.22, vDepth);
                 float alpha = mix(uShallowAlpha, uDeepAlpha, depthFactor) * edgeFade;
 
                 gl_FragColor = vec4(waterColor, alpha);
@@ -187,6 +275,7 @@ function createChunkWaterGeometry(cx, cz, getTerrainSample) {
 
 export function createWater(scene, getTerrainSample, diagnostics, options = {}) {
     const getChunkGroup = options.getChunkGroup ?? (() => null);
+    const getLightingState = options.getLightingState ?? (() => null);
     const material = createWaterMaterial();
     const activeChunks = new Map();
     const queuedChunkKeys = new Set();
@@ -195,6 +284,7 @@ export function createWater(scene, getTerrainSample, diagnostics, options = {}) 
     let elapsed = 0;
     let refreshTimer = 0;
     let lastFocusSignature = '';
+    let lastLightingVersion = -1;
 
     if (WATER_CONFIG.ativa === false) {
         return {
@@ -308,10 +398,30 @@ export function createWater(scene, getTerrainSample, diagnostics, options = {}) 
         diagnostics?.setCounter('waterChunks', activeChunks.size);
     }
 
+    function updateLightingUniforms() {
+        const lighting = getLightingState?.();
+        if (!lighting) return;
+        if (lighting.version === lastLightingVersion) return;
+        lastLightingVersion = lighting.version;
+
+        const uniforms = material.uniforms;
+        uniforms.uSunDirection.value.copy(lighting.sunDirection);
+        uniforms.uMoonDirection.value.copy(lighting.moonDirection);
+        uniforms.uSunColor.value.copy(lighting.sunColor);
+        uniforms.uMoonColor.value.copy(lighting.moonColor);
+        uniforms.uSkyColor.value.copy(lighting.skyColor);
+        uniforms.uSunIntensity.value = lighting.sunIntensity;
+        uniforms.uMoonIntensity.value = lighting.moonIntensity;
+        uniforms.uAmbientIntensity.value = lighting.skyIntensity;
+        uniforms.uLightLevel.value = lighting.lightLevel;
+        uniforms.uHorizonWarmth.value = lighting.horizonWarmth;
+    }
+
     function updateForPlayers(deltaSeconds, playerPositions) {
         elapsed += deltaSeconds;
         refreshTimer += deltaSeconds * 1000;
         material.uniforms.uTime.value = elapsed;
+        updateLightingUniforms();
 
         const focuses = getFocuses(playerPositions);
         if (!focuses.length) return;
