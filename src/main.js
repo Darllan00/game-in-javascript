@@ -4,6 +4,8 @@ import { createTerrain, setTerrainSeed } from './terrain.js';
 import { buildSeedUrl, createRandomSeedText, resolveWorldSeed } from './seed.js';
 import { createPerformanceDiagnostics } from './performanceDiagnostics.js';
 import { createDayNightCycle } from './dayNightCycle.js';
+import { createTerrainDataMap } from './terrainDataMap.js';
+import { createWater } from './water.js';
 import { createGrass } from './grass.js';
 import { createTrees } from './trees.js';
 import { CONFIG } from './config.js';
@@ -17,7 +19,8 @@ setTerrainSeed(worldSeed.numeric);
 
 const diagnostics = createPerformanceDiagnostics(renderer);
 const dayNightCycle = createDayNightCycle(scene, camera);
-const terrain = createTerrain(scene, diagnostics);
+const terrainDataMap = createTerrainDataMap(diagnostics);
+const terrain = createTerrain(scene, diagnostics, { terrainDataMap });
 const {
     getHeight,
     getSample,
@@ -30,7 +33,8 @@ const {
     updateChunksForPlayers,
     dispose
 } = terrain;
-const trees = createTrees(scene, getSample, diagnostics, { getChunkGroup });
+const trees = createTrees(scene, getSample, diagnostics, { getChunkGroup, getChunkVegetationMetadata });
+const water = createWater(scene, getSample, diagnostics, { getChunkGroup });
 const grass = createGrass(scene, getHeight, getSample, diagnostics, {
     getChunkGroup,
     getChunkVegetationMetadata,
@@ -39,6 +43,7 @@ const grass = createGrass(scene, getHeight, getSample, diagnostics, {
 });
 setChunkLifecycle({
     onChunkDisposed(chunk) {
+        water.disposeChunk(chunk);
         grass.disposeChunk(chunk);
         trees.disposeChunk(chunk);
     }
@@ -93,6 +98,9 @@ let fpsFrames = 0;
 let fpsElapsed = 0;
 let startWarmupPromise = null;
 let didInitialWarmup = false;
+const macroWorldEnabled = CONFIG.terreno.macroSuperChunks?.ativo !== false
+    && CONFIG.terreno.macroSuperChunks?.renderizar !== false;
+const terrainDataMapEnabled = terrainDataMap.enabled;
 
 function updateFpsCounter(delta) {
     if (!fpsCounter) return;
@@ -108,7 +116,8 @@ function updateFpsCounter(delta) {
 }
 
 function getLoadingStatus(progress) {
-    if (!isMacroWorldReady()) return 'Preparando terreno distante...';
+    if (terrainDataMapEnabled && !terrainDataMap.isReady()) return 'Mapeando mundo...';
+    if (macroWorldEnabled && !isMacroWorldReady()) return 'Preparando terreno distante...';
     if (progress < 0.55) return 'Preparando terreno proximo...';
     if (progress < 0.86) return 'Distribuindo vegetacao...';
     if (progress < 0.98) return 'Finalizando mundo...';
@@ -126,9 +135,11 @@ function warmUpWorldBeforeStart(focusPosition) {
     startWarmupPromise = (async () => {
         const loadingConfig = CONFIG.carregamentoInicial;
         const minDurationMs = loadingConfig.duracaoMinimaMs ?? 1200;
+        const maxDurationMs = loadingConfig.duracaoMaximaMs ?? 10000;
         const minFrames = loadingConfig.framesMinimos ?? 45;
         const updatesPerFrame = Math.max(1, loadingConfig.atualizacoesPorFrame ?? 1);
         const macroBudgetMs = CONFIG.terreno.macroSuperChunks?.tempoGeracaoMs ?? 8;
+        const dataMapBudgetMs = CONFIG.terreno.mapaDados?.tempoGeracaoMs ?? 6;
         const focus = focusPosition ?? mode.player?.position ?? { x: 0, z: 0 };
         const focuses = [focus];
         const startedAt = performance.now();
@@ -136,17 +147,37 @@ function warmUpWorldBeforeStart(focusPosition) {
 
         showLoadingScreen('Preparando terreno...');
 
-        while (frame < minFrames || performance.now() - startedAt < minDurationMs || !isMacroWorldReady()) {
+        while (true) {
             const elapsedMs = performance.now() - startedAt;
+            const shouldKeepLoading = frame < minFrames
+                || elapsedMs < minDurationMs
+                || (macroWorldEnabled && !isMacroWorldReady())
+                || (terrainDataMapEnabled && !terrainDataMap.isReady() && elapsedMs < maxDurationMs);
+            if (!shouldKeepLoading) break;
+
             const warmupProgress = Math.max(frame / minFrames, elapsedMs / minDurationMs);
             const macroProgress = getMacroWorldProgress();
-            const progress = Math.min(0.98, macroProgress * 0.68 + Math.min(1, warmupProgress) * 0.32);
+            const dataMapProgress = terrainDataMap.getProgress();
+            let progress = Math.min(1, warmupProgress);
+            if (terrainDataMapEnabled) {
+                progress = dataMapProgress * 0.68 + progress * 0.32;
+            }
+            if (macroWorldEnabled) {
+                progress = macroProgress * 0.45 + progress * 0.55;
+            }
+            progress = Math.min(0.98, progress);
             updateLoadingScreen(progress, getLoadingStatus(progress));
 
-            preloadMacroWorldStep(performance.now() + macroBudgetMs, focuses);
+            if (terrainDataMapEnabled) {
+                terrainDataMap.preloadStep(performance.now() + dataMapBudgetMs, focuses);
+            }
+            if (macroWorldEnabled) {
+                preloadMacroWorldStep(performance.now() + macroBudgetMs, focuses);
+            }
 
             for (let i = 0; i < updatesPerFrame; i++) {
                 updateChunksForPlayers(focuses, false);
+                water.updateForPlayers(1 / 60, focuses);
                 trees.updateForPlayers(1 / 60, focuses, false);
                 grass.updateForPlayers(1 / 60, focuses, false);
             }
@@ -185,6 +216,7 @@ function loop() {
     if (modeState.isActive) {
         updateChunksForPlayers(modeState.focuses, modeState.isMoving);
     }
+    water.updateForPlayers(delta, modeState.focuses);
     trees.updateForPlayers(delta, modeState.focuses, modeState.isActive && modeState.isMoving);
     grass.updateForPlayers(delta, modeState.focuses, modeState.isActive && modeState.isMoving);
 
@@ -200,6 +232,7 @@ window.addEventListener('resize', () => {
 
 window.addEventListener('beforeunload', () => {
     dayNightCycle.dispose();
+    water.dispose();
     grass.dispose();
     trees.dispose();
     mode.dispose();

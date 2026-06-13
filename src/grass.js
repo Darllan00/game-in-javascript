@@ -952,6 +952,7 @@ export function createGrass(scene, getHeight, getTerrainSample, diagnostics, opt
         const focusSignature = getFocusSignature(focuses);
         const primaryFocus = focuses[0];
         const canUpdateWhileMoving = grassConfig.atualizarEnquantoMovendo && grassConfig.tilesMovendoPorAtualizacao > 0;
+        const isInitialStationaryRefresh = !isPlayerMoving && !lastRefreshSignature;
 
         if (isPlayerMoving && !canUpdateWhileMoving) {
             diagnostics?.setCounter('grassPaused', 1);
@@ -1003,6 +1004,18 @@ export function createGrass(scene, getHeight, getTerrainSample, diagnostics, opt
             lastPlayerChunkZ = primaryFocus.chunkZ;
             lastRefreshChunkX = primaryFocus.chunkX;
             lastRefreshChunkZ = primaryFocus.chunkZ;
+        }
+
+        if (isInitialStationaryRefresh) {
+            const initialDistance = Math.min(
+                getFullRefreshDistance(),
+                Math.max(1, grassConfig.chunksPorAtualizacaoParado ?? 1)
+            );
+            currentRefreshDistance = Math.max(currentRefreshDistance, initialDistance);
+            stoppedRefreshTimer = grassConfig.intervaloAtualizacaoParadoMs ?? 0;
+            stoppedQueueTimer = grassConfig.intervaloAtualizacaoParadoMs ?? 0;
+            refreshTilesForFocuses(focuses, currentRefreshDistance);
+            processTileQueue(focuses);
         }
 
         const fullRefreshDistance = getFullRefreshDistance();

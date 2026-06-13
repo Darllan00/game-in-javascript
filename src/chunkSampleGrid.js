@@ -1,3 +1,7 @@
+import { CONFIG } from './config.js';
+
+const WATER_SURFACE_Y = CONFIG.terreno.nivelDoMar + (CONFIG.agua?.nivelSuperficie ?? 0);
+
 function createSampleGridApi(gridStartX, gridStartZ, terrainStep, columnCount, rowCount, samples, heights) {
     function getIndex(x, z) {
         const column = Math.round((x - gridStartX) / terrainStep);
@@ -47,8 +51,13 @@ function createSampleGridApi(gridStartX, gridStartZ, terrainStep, columnCount, r
             const tz = (z - z0) / terrainStep;
             const mix = (a, b, t) => a + (b - a) * t;
             const mix2 = (a00, a10, a01, a11) => mix(mix(a00, a10, tx), mix(a01, a11, tx), tz);
-
-            return {
+            const waterCoverage = mix2(
+                s00.water?.coverage ?? 0,
+                s10.water?.coverage ?? 0,
+                s01.water?.coverage ?? 0,
+                s11.water?.coverage ?? 0
+            );
+            const sample = {
                 x,
                 z,
                 height: mix2(s00.height, s10.height, s01.height, s11.height),
@@ -60,6 +69,39 @@ function createSampleGridApi(gridStartX, gridStartZ, terrainStep, columnCount, r
                 moisture: mix2(s00.moisture, s10.moisture, s01.moisture, s11.moisture),
                 temperature: mix2(s00.temperature, s10.temperature, s01.temperature, s11.temperature)
             };
+
+            const actualWaterDepth = Math.max(0, WATER_SURFACE_Y - sample.height);
+
+            if (waterCoverage > 0.001 && actualWaterDepth > 0.001) {
+                sample.water = {
+                    kind: s00.water?.kind ?? s10.water?.kind ?? s01.water?.kind ?? s11.water?.kind ?? 'water',
+                    coverage: waterCoverage,
+                    depth: actualWaterDepth,
+                    surfaceY: WATER_SURFACE_Y,
+                    shore: mix2(
+                        s00.water?.shore ?? 0,
+                        s10.water?.shore ?? 0,
+                        s01.water?.shore ?? 0,
+                        s11.water?.shore ?? 0
+                    ),
+                    flowX: mix2(
+                        s00.water?.flowX ?? 0,
+                        s10.water?.flowX ?? 0,
+                        s01.water?.flowX ?? 0,
+                        s11.water?.flowX ?? 0
+                    ),
+                    flowZ: mix2(
+                        s00.water?.flowZ ?? 0,
+                        s10.water?.flowZ ?? 0,
+                        s01.water?.flowZ ?? 0,
+                        s11.water?.flowZ ?? 0
+                    )
+                };
+            } else {
+                sample.water = null;
+            }
+
+            return sample;
         },
         getGridSampleExact(x, z) {
             const index = getIndex(x, z);

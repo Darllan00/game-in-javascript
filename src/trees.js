@@ -3,6 +3,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { CONFIG } from './config.js';
 import { getChunkKey } from './chunks.js';
+import { canPlaceTreeOnSample } from './vegetationRules.js';
 
 const CHUNK_SIZE = CONFIG.terreno.tamanhoChunk;
 const WORLD_MIN = -CONFIG.terreno.tamanhoGrade / 2;
@@ -83,11 +84,7 @@ function rememberLimitedSetValue(set, value, limit) {
 }
 
 function canPlaceTree(sample) {
-    const treeConfig = getTreeConfig();
-    if (!sample) return false;
-    if (sample.height < CONFIG.terreno.nivelDoMar + 0.08) return false;
-    if (sample.height > (treeConfig.alturaMaximaTerreno ?? 34)) return false;
-    return sample.weights.mountains < (treeConfig.pesoMaximoMontanha ?? 0.36);
+    return canPlaceTreeOnSample(sample);
 }
 
 function isLeafMesh(mesh) {
@@ -259,6 +256,7 @@ function prepareTreeAsset(root, options = {}) {
 export function createTrees(scene, getTerrainSample, diagnostics, options = {}) {
     const treeConfig = getTreeConfig();
     const getChunkGroup = options.getChunkGroup ?? (() => null);
+    const getChunkVegetationMetadata = options.getChunkVegetationMetadata ?? (() => null);
     const activeBatches = new Map();
     const queuedChunkKeys = new Set();
     const emptyChunkKeys = new Set();
@@ -294,6 +292,10 @@ export function createTrees(scene, getTerrainSample, diagnostics, options = {}) 
         const key = getChunkKey(cx, cz);
         const cached = rawCandidateCache.get(key);
         if (cached) return cached;
+        if (getChunkVegetationMetadata(cx, cz)?.canContainTrees === false) {
+            rememberLimitedMapValue(rawCandidateCache, key, [], TREE_PLACEMENT_CACHE_LIMIT);
+            return [];
+        }
 
         const candidates = [];
         const startX = cx * CHUNK_SIZE;
@@ -483,6 +485,10 @@ export function createTrees(scene, getTerrainSample, diagnostics, options = {}) 
         const key = getChunkKey(cx, cz);
         if (activeBatches.has(key) || queuedChunkKeys.has(key)) return;
         if (emptyChunkKeys.has(key)) return;
+        if (getChunkVegetationMetadata(cx, cz)?.canContainTrees === false) {
+            rememberLimitedSetValue(emptyChunkKeys, key, EMPTY_TREE_CHUNK_CACHE_LIMIT);
+            return;
+        }
         if (!getChunkGroup(cx, cz)) return;
 
         buildQueue.push({ cx, cz, key, priority });
