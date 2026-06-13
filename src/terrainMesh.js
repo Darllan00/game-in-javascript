@@ -13,11 +13,9 @@ const COOL_TINT = new THREE.Color(0xa8b8c0);
 const WARM_TINT = new THREE.Color(0xd9c890);
 const DRY_TINT = new THREE.Color(0xb09a55);
 const BANK_SAND_COLOR = new THREE.Color(0xc8b779);
-const BANK_DIRT_COLOR = new THREE.Color(0x6e5133);
 const WATER_SURFACE_Y = CONFIG.terreno.nivelDoMar + (CONFIG.agua?.nivelSuperficie ?? 0);
 const BANK_CONFIG = CONFIG.agua?.barranco ?? {};
 const BANK_SAND_MAX_STEEPNESS = BANK_CONFIG.areiaAteInclinacao ?? 0.62;
-const BANK_DIRT_MIN_STEEPNESS = BANK_CONFIG.terraApartirInclinacao ?? 0.84;
 const SHALLOW_BED_DEPTH = 2.4;
 const colorBuffer = new THREE.Color();
 const tempColor = new THREE.Color();
@@ -65,14 +63,11 @@ function getTerrainColor(sample, y, target) {
     } else if (sample.bank?.coverage > 0.001) {
         const bankCoverage = THREE.MathUtils.clamp(sample.bank.coverage, 0, 1);
         const steepness = THREE.MathUtils.clamp(sample.bank.steepness ?? 0, 0, 1);
-        const dirtBlend = smoothstep(BANK_DIRT_MIN_STEEPNESS, 1.0, steepness)
-            * smoothstep(0.08, 0.34, bankCoverage);
-        const sandBlend = (1 - smoothstep(BANK_SAND_MAX_STEEPNESS, BANK_DIRT_MIN_STEEPNESS, steepness))
+        const sandBlend = (1 - smoothstep(BANK_SAND_MAX_STEEPNESS, 1.0, steepness))
             * smoothstep(0.12, 0.58, bankCoverage)
             * smoothstep(WATER_SURFACE_Y + 2.4, WATER_SURFACE_Y + 0.12, y);
 
         target.lerp(BANK_SAND_COLOR, THREE.MathUtils.clamp(sandBlend * 0.65, 0, 0.55));
-        target.lerp(BANK_DIRT_COLOR, THREE.MathUtils.clamp(dirtBlend, 0, 0.94));
     }
 
     return target;

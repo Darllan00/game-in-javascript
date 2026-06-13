@@ -6,8 +6,8 @@ const CHUNK_SIZE = CONFIG.terreno.tamanhoChunk;
 const WORLD_MIN = -CONFIG.terreno.tamanhoGrade / 2;
 const WORLD_MAX = CONFIG.terreno.tamanhoGrade / 2;
 const WATER_CONFIG = CONFIG.agua ?? {};
+const WATER_SURFACE_Y = CONFIG.terreno.nivelDoMar + (WATER_CONFIG.nivelSuperficie ?? 0);
 const WATER_RENDER_OFFSET = Math.min(WATER_CONFIG.elevacaoSuperficie ?? -6.08, -0.01);
-const MIN_RENDERABLE_WATER_DEPTH = Math.max(0.035, Math.abs(WATER_RENDER_OFFSET) + 0.03);
 const EMPTY_WATER_CHUNK_CACHE_LIMIT = 4096;
 
 function rememberLimitedSetValue(set, value, limit) {
@@ -57,7 +57,7 @@ function createWaterMaterial() {
                 float waveA = sin(dot(worldBase.xz, flow) * 0.065 + uTime * uWaveSpeed);
                 float waveB = sin(dot(worldBase.xz, vec2(-flow.y, flow.x)) * 0.041 + uTime * uWaveSpeed * 0.73);
                 float wave = waveA * 0.65 + waveB * 0.35;
-                float waveMask = smoothstep(0.0, 0.35, aCoverage);
+                float waveMask = smoothstep(0.38, 0.82, aCoverage);
                 transformedPosition.y -= (wave * 0.5 + 0.5) * uWaveAmplitude * waveMask;
 
                 vec4 worldPosition = modelMatrix * vec4(transformedPosition, 1.0);
@@ -66,7 +66,7 @@ function createWaterMaterial() {
 
                 vDepth = aDepth;
                 vCoverage = aCoverage;
-                vFoam = 1.0 - smoothstep(0.28, 0.78, aCoverage);
+                vFoam = 1.0 - smoothstep(0.16, 0.78, aCoverage);
                 vWorldXZ = worldPosition.xz;
 
                 #include <fog_vertex>
@@ -92,8 +92,9 @@ function createWaterMaterial() {
                     + sin(vWorldXZ.x * -0.07 + vWorldXZ.y * 0.21) * 0.018;
                 vec3 waterColor = mix(uShallowColor, uDeepColor, depthFactor);
                 waterColor += ripple;
-                waterColor = mix(waterColor, uFoamColor, vFoam * 0.42);
-                float alpha = mix(uShallowAlpha, uDeepAlpha, depthFactor) * smoothstep(0.02, 0.38, vCoverage);
+                waterColor = mix(waterColor, uFoamColor, vFoam * 0.22);
+                float edgeFade = smoothstep(0.001, 0.34, vCoverage) * smoothstep(0.001, 0.22, vDepth);
+                float alpha = mix(uShallowAlpha, uDeepAlpha, depthFactor) * edgeFade;
 
                 gl_FragColor = vec4(waterColor, alpha);
 
@@ -124,7 +125,7 @@ function createChunkWaterGeometry(cx, cz, getTerrainSample) {
     const waterDepths = [];
     const coverages = [];
     const flows = [];
-    const hasRenderableWater = [];
+    const hasWater = [];
     const indices = [];
     const vertexIndices = [];
     let waterVertexCount = 0;
@@ -136,18 +137,16 @@ function createChunkWaterGeometry(cx, cz, getTerrainSample) {
         const water = sample.water;
         const coverage = water?.coverage ?? 0;
         const depthValue = water ? Math.max(0, water.surfaceY - sample.height) : 0;
-        const renderableWater = coverage > 0.02 && depthValue > MIN_RENDERABLE_WATER_DEPTH;
-        const surfaceY = renderableWater
-            ? water.surfaceY + WATER_RENDER_OFFSET
-            : sample.height;
+        const edgeWater = coverage > 0.001 && depthValue > 0.001;
+        const surfaceY = (water?.surfaceY ?? WATER_SURFACE_Y) + WATER_RENDER_OFFSET;
         const index = positions.length / 3;
 
         positions.push(x, surfaceY, z);
         waterDepths.push(depthValue);
         coverages.push(coverage);
         flows.push(water?.flowX ?? 0, water?.flowZ ?? 0);
-        hasRenderableWater.push(renderableWater);
-        if (renderableWater) waterVertexCount++;
+        hasWater.push(edgeWater);
+        if (edgeWater) waterVertexCount++;
         return index;
     }
 
@@ -164,10 +163,11 @@ function createChunkWaterGeometry(cx, cz, getTerrainSample) {
             const b = vertexIndices[row][column + 1];
             const c = vertexIndices[row + 1][column];
             const d = vertexIndices[row + 1][column + 1];
-            if (hasRenderableWater[a] && hasRenderableWater[c] && hasRenderableWater[b]) {
+
+            if (hasWater[a] || hasWater[c] || hasWater[b]) {
                 indices.push(a, c, b);
             }
-            if (hasRenderableWater[b] && hasRenderableWater[c] && hasRenderableWater[d]) {
+            if (hasWater[b] || hasWater[c] || hasWater[d]) {
                 indices.push(b, c, d);
             }
         }

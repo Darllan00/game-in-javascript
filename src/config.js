@@ -34,7 +34,7 @@ export const CONFIG = {
             passoTerrenoMontanha: 128,
             amostrasRugosidade: 5,
             rugosidadeMedia: 28,
-            rugosidadeMontanha: 70,
+            rugosidadeMontanha: 7,
             esconderAteDistanciaChunks: 20,
             deslocamentoVertical: 0,
             tempoGeracaoMs: 8
@@ -43,7 +43,7 @@ export const CONFIG = {
             ativo: true,
             tamanhoTileChunks: 16,
             amostrasPorEixo: 7,
-            tempoGeracaoMs: 7,
+            tempoGeracaoMs: 70,
             prioridadeRugosidadeMedia: 28,
             prioridadeRugosidadeAlta: 70
         },
@@ -54,7 +54,7 @@ export const CONFIG = {
         distanciaChunks: 20,
         chunksPorFrame: 2,
         intervaloAtualizacaoMs: 350,
-        passoMalha: 1,
+        passoMalha: 2.0,
         elevacaoSuperficie: -0.08,
         nivelSuperficie: -3.0,
         nivelMaximoSuperficie: 0,
@@ -64,9 +64,8 @@ export const CONFIG = {
         margemTerrenoAcimaSuperficie: 0.24,
         barranco: {
             bloquearVegetacaoCobertura: 0.08,
-            bloquearVegetacaoInclinacao: 0.28,
-            areiaAteInclinacao: 0.62,
-            terraApartirInclinacao: 0.84
+            bloquearVegetacaoInclinacao: 0.028,
+            areiaAteInclinacao: 0.62
         },
         rios: {
             ativo: true,
@@ -84,7 +83,7 @@ export const CONFIG = {
             alturaMaxima: 0,
             encaixeMargemAltura: 0.28,
             amostrasLeito: 3,
-            profundidadeMin: 1.8,
+            profundidadeMin: 2.8,
             profundidadeMax: 18,
             densidade: 0.42
         },
@@ -125,9 +124,9 @@ export const CONFIG = {
         },
         material: {
             transparenciaRasa: 0.42,
-            transparenciaFunda: 0.78,
-            velocidadeOnda: 0.72,
-            amplitudeOnda: 0.055
+            transparenciaFunda: 0.68,
+            velocidadeOnda: 0.992,
+            amplitudeOnda: 0.6
         }
     },
     movimento: {
@@ -231,11 +230,11 @@ export const CONFIG = {
         chancePorTentativa: 0.75,
         distanciaMinima: 6,
         raioBloqueio: 2.6,
-        escalaMin: 0.85,
-        escalaMax: 1.55,
+        escalaMin: 1.25,
+        escalaMax: 1.75,
         alturaMaximaTerreno: 34,
         pesoMaximoMontanha: 0.36,
-        enterraNoTerreno: 3.7,
+        enterraNoTerreno: 5.0,
         lod: {
             ativo: true,
             asset: 'assets/arvore leve.glb',

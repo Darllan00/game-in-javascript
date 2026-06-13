@@ -60,7 +60,7 @@ function slopesHeight(x, z) {
 }
 
 function mountainsHeight(x, z) {
-    const mass = smoothstep(0.34, 0.82, fbm(x * 0.0020, z * 0.0020, 4, 6)) * 22;
+    const mass = smoothstep(0.34, 0.82, fbm(x * 0.0020, z * 0.0020, 4, 6)) * 38;
     const ridge = Math.pow(ridgedFbm(x * 0.0030, z * 0.0030, 5, 3), 1.72);
     const valleys = Math.pow(1 - ridgedFbm(x * 0.0021, z * 0.0021, 4, 9), 2.0);
     const peaks = ridge * 50;

@@ -27,9 +27,6 @@ const MIN_EDGE_WATER_DEPTH = Math.max(
     Math.abs(WATER_CONFIG.elevacaoSuperficie ?? 0) + 0.06
 );
 const DEFAULT_TERRAIN_FIT_MARGIN = WATER_CONFIG.margemTerrenoAcimaSuperficie ?? 0.24;
-const BANK_CONFIG = WATER_CONFIG.barranco ?? {};
-const BANK_SAND_MAX_STEEPNESS = BANK_CONFIG.areiaAteInclinacao ?? 0.42;
-const BANK_DIRT_MIN_STEEPNESS = BANK_CONFIG.terraApartirInclinacao ?? 0.58;
 
 function clamp01(value) {
     return THREE.MathUtils.clamp(value, 0, 1);
@@ -78,12 +75,11 @@ function createBankData(coverage, steepness) {
     if (safeCoverage <= 0.001) return null;
 
     const safeSteepness = clamp01(steepness);
-    const materialBlend = smoothstep(BANK_SAND_MAX_STEEPNESS, BANK_DIRT_MIN_STEEPNESS, safeSteepness);
     return {
         coverage: safeCoverage,
         steepness: safeSteepness,
-        material: materialBlend >= 0.5 ? 'dirt' : 'sand',
-        materialBlend
+        material: 'sand',
+        materialBlend: 0
     };
 }
 
