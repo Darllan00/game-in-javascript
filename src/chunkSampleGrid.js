@@ -57,6 +57,24 @@ function createSampleGridApi(gridStartX, gridStartZ, terrainStep, columnCount, r
                 s01.water?.coverage ?? 0,
                 s11.water?.coverage ?? 0
             );
+            const bankCoverage = mix2(
+                s00.bank?.coverage ?? 0,
+                s10.bank?.coverage ?? 0,
+                s01.bank?.coverage ?? 0,
+                s11.bank?.coverage ?? 0
+            );
+            const bankSteepness = mix2(
+                s00.bank?.steepness ?? 0,
+                s10.bank?.steepness ?? 0,
+                s01.bank?.steepness ?? 0,
+                s11.bank?.steepness ?? 0
+            );
+            const bankMaterialBlend = mix2(
+                s00.bank?.materialBlend ?? 0,
+                s10.bank?.materialBlend ?? 0,
+                s01.bank?.materialBlend ?? 0,
+                s11.bank?.materialBlend ?? 0
+            );
             const sample = {
                 x,
                 z,
@@ -99,6 +117,17 @@ function createSampleGridApi(gridStartX, gridStartZ, terrainStep, columnCount, r
                 };
             } else {
                 sample.water = null;
+            }
+
+            if (bankCoverage > 0.001) {
+                sample.bank = {
+                    coverage: bankCoverage,
+                    steepness: bankSteepness,
+                    materialBlend: bankMaterialBlend,
+                    material: bankMaterialBlend >= 0.5 ? 'dirt' : 'sand'
+                };
+            } else {
+                sample.bank = null;
             }
 
             return sample;

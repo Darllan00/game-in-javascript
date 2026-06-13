@@ -54,14 +54,20 @@ export const CONFIG = {
         distanciaChunks: 20,
         chunksPorFrame: 2,
         intervaloAtualizacaoMs: 350,
-        passoMalha: 4,
+        passoMalha: 1,
         elevacaoSuperficie: -0.08,
-        nivelSuperficie: 0,
+        nivelSuperficie: -3.0,
         nivelMaximoSuperficie: 0,
-        profundidadeMaximaDeformacao: 28,
+        profundidadeMaximaDeformacao: 48,
         folgaTerrenoAcimaAgua: 0.16,
         profundidadeMinimaBorda: 0.18,
         margemTerrenoAcimaSuperficie: 0.24,
+        barranco: {
+            bloquearVegetacaoCobertura: 0.08,
+            bloquearVegetacaoInclinacao: 0.28,
+            areiaAteInclinacao: 0.62,
+            terraApartirInclinacao: 0.84
+        },
         rios: {
             ativo: true,
             familias: 3,
@@ -125,7 +131,7 @@ export const CONFIG = {
         }
     },
     movimento: {
-        velocidade: 25,
+        velocidade: 205,
         gravidade: 30,
         pulo: 50,
         alturaMaximaPasso: 1.35
@@ -229,7 +235,7 @@ export const CONFIG = {
         escalaMax: 1.55,
         alturaMaximaTerreno: 34,
         pesoMaximoMontanha: 0.36,
-        enterraNoTerreno: 0.7,
+        enterraNoTerreno: 3.7,
         lod: {
             ativo: true,
             asset: 'assets/arvore leve.glb',

@@ -6,7 +6,7 @@ const CHUNK_SIZE = CONFIG.terreno.tamanhoChunk;
 const WORLD_MIN = -CONFIG.terreno.tamanhoGrade / 2;
 const WORLD_MAX = CONFIG.terreno.tamanhoGrade / 2;
 const WATER_CONFIG = CONFIG.agua ?? {};
-const WATER_RENDER_OFFSET = Math.min(WATER_CONFIG.elevacaoSuperficie ?? -0.08, -0.01);
+const WATER_RENDER_OFFSET = Math.min(WATER_CONFIG.elevacaoSuperficie ?? -6.08, -0.01);
 const MIN_RENDERABLE_WATER_DEPTH = Math.max(0.035, Math.abs(WATER_RENDER_OFFSET) + 0.03);
 const EMPTY_WATER_CHUNK_CACHE_LIMIT = 4096;
 

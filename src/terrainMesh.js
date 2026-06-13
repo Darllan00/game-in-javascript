@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { smoothstep, valueNoise2D } from './noise.js';
+import { CONFIG } from './config.js';
 
 const BIOME_COLORS = {
     plains: new THREE.Color(0x6fb86a),
@@ -11,6 +12,13 @@ const SNOW_TINT = new THREE.Color(0xeef2f5);
 const COOL_TINT = new THREE.Color(0xa8b8c0);
 const WARM_TINT = new THREE.Color(0xd9c890);
 const DRY_TINT = new THREE.Color(0xb09a55);
+const BANK_SAND_COLOR = new THREE.Color(0xc8b779);
+const BANK_DIRT_COLOR = new THREE.Color(0x6e5133);
+const WATER_SURFACE_Y = CONFIG.terreno.nivelDoMar + (CONFIG.agua?.nivelSuperficie ?? 0);
+const BANK_CONFIG = CONFIG.agua?.barranco ?? {};
+const BANK_SAND_MAX_STEEPNESS = BANK_CONFIG.areiaAteInclinacao ?? 0.62;
+const BANK_DIRT_MIN_STEEPNESS = BANK_CONFIG.terraApartirInclinacao ?? 0.84;
+const SHALLOW_BED_DEPTH = 2.4;
 const colorBuffer = new THREE.Color();
 const tempColor = new THREE.Color();
 const TERRAIN_SKIRT_DEPTH = 32;
@@ -48,6 +56,23 @@ function getTerrainColor(sample, y, target) {
         const t = THREE.MathUtils.clamp((y - 22) / 14, 0, 0.4);
         tempColor.copy(target).multiplyScalar(0.85);
         target.lerp(tempColor, t);
+    }
+
+    if (sample.water?.coverage > 0.02 && y < WATER_SURFACE_Y) {
+        const bedSand = smoothstep(0.02, SHALLOW_BED_DEPTH, WATER_SURFACE_Y - y)
+            * THREE.MathUtils.clamp(sample.water.coverage * 1.3, 0, 0.9);
+        target.lerp(BANK_SAND_COLOR, bedSand);
+    } else if (sample.bank?.coverage > 0.001) {
+        const bankCoverage = THREE.MathUtils.clamp(sample.bank.coverage, 0, 1);
+        const steepness = THREE.MathUtils.clamp(sample.bank.steepness ?? 0, 0, 1);
+        const dirtBlend = smoothstep(BANK_DIRT_MIN_STEEPNESS, 1.0, steepness)
+            * smoothstep(0.08, 0.34, bankCoverage);
+        const sandBlend = (1 - smoothstep(BANK_SAND_MAX_STEEPNESS, BANK_DIRT_MIN_STEEPNESS, steepness))
+            * smoothstep(0.12, 0.58, bankCoverage)
+            * smoothstep(WATER_SURFACE_Y + 2.4, WATER_SURFACE_Y + 0.12, y);
+
+        target.lerp(BANK_SAND_COLOR, THREE.MathUtils.clamp(sandBlend * 0.65, 0, 0.55));
+        target.lerp(BANK_DIRT_COLOR, THREE.MathUtils.clamp(dirtBlend, 0, 0.94));
     }
 
     return target;

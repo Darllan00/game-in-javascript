@@ -27,6 +27,9 @@ const MIN_EDGE_WATER_DEPTH = Math.max(
     Math.abs(WATER_CONFIG.elevacaoSuperficie ?? 0) + 0.06
 );
 const DEFAULT_TERRAIN_FIT_MARGIN = WATER_CONFIG.margemTerrenoAcimaSuperficie ?? 0.24;
+const BANK_CONFIG = WATER_CONFIG.barranco ?? {};
+const BANK_SAND_MAX_STEEPNESS = BANK_CONFIG.areiaAteInclinacao ?? 0.42;
+const BANK_DIRT_MIN_STEEPNESS = BANK_CONFIG.terraApartirInclinacao ?? 0.58;
 
 function clamp01(value) {
     return THREE.MathUtils.clamp(value, 0, 1);
@@ -68,6 +71,20 @@ function getLowGroundWaterCoverage(terrainHeight, surfaceY, influence) {
         terrainHeight
     );
     return lowGround * influence;
+}
+
+function createBankData(coverage, steepness) {
+    const safeCoverage = clamp01(coverage);
+    if (safeCoverage <= 0.001) return null;
+
+    const safeSteepness = clamp01(steepness);
+    const materialBlend = smoothstep(BANK_SAND_MAX_STEEPNESS, BANK_DIRT_MIN_STEEPNESS, safeSteepness);
+    return {
+        coverage: safeCoverage,
+        steepness: safeSteepness,
+        material: materialBlend >= 0.5 ? 'dirt' : 'sand',
+        materialBlend
+    };
 }
 
 function getRiverSurfaceY() {
@@ -214,6 +231,10 @@ function getRiverFamilySample(x, z, familyIndex, terrainHeight) {
     const coverage = Math.max(channelCoverage, lowGroundCoverage) * cutFit * lowlandFit;
     const depth = Math.max(0, surfaceY - targetHeight);
     const shore = 1 - smoothstep(width * 0.58, width + bankWidth, distance);
+    const bankCoverage = valleyCoverage * cutFit * lowlandFit;
+    const bankSteepness = distance <= width
+        ? smoothstep(width * 0.45, width, distance) * 0.38
+        : 1 - smoothstep(width + bankWidth * 0.12, width + bankWidth * 0.92, distance);
 
     return {
         kind: 'river',
@@ -223,6 +244,7 @@ function getRiverFamilySample(x, z, familyIndex, terrainHeight) {
         depth,
         surfaceY,
         shore,
+        bank: createBankData(bankCoverage, bankSteepness),
         flowX: cos,
         flowZ: sin
     };
@@ -303,6 +325,11 @@ function getSeaFamilySample(x, z, familyIndex, terrainHeight) {
             smoothstep(1, 1 + margin, normalizedDistance)
         );
         const targetHeight = normalizedDistance < 1 ? waterEdgeTarget : shoreTarget;
+        const bankCoverage = basinInfluence * basinFit;
+        const bankSteepness = normalizedDistance < 1
+            ? smoothstep(0.62, 1, normalizedDistance) * 0.35
+            : 1 - smoothstep(1 + margin * 0.08, 1 + margin * 0.95, normalizedDistance);
+
         const sample = {
             kind: 'sea',
             coverage: finalCoverage,
@@ -311,6 +338,7 @@ function getSeaFamilySample(x, z, familyIndex, terrainHeight) {
             depth: Math.max(0, WATER_SURFACE_Y - targetHeight) * Math.max(0.2, finalCoverage),
             surfaceY: WATER_SURFACE_Y,
             shore: finalCoverage,
+            bank: createBankData(bankCoverage, bankSteepness),
             flowX: cos,
             flowZ: sin
         };
@@ -479,6 +507,10 @@ function getLakeSample(x, z, terrainHeight) {
             const targetHeight = normalizedDistance < 1 ? waterEdgeTarget : shoreTarget;
             const lowGroundCoverage = getLowGroundWaterCoverage(terrainHeight, lake.level, basinInfluence);
             const finalCoverage = Math.max(fittedCoverage, lowGroundCoverage * basinFit);
+            const bankCoverage = basinInfluence * basinFit;
+            const bankSteepness = normalizedDistance < 1
+                ? smoothstep(0.64, 1, normalizedDistance) * 0.35
+                : 1 - smoothstep(1 + margin * 0.08, 1 + margin * 0.95, normalizedDistance);
 
             const sample = {
                 kind: 'lake',
@@ -488,6 +520,7 @@ function getLakeSample(x, z, terrainHeight) {
                 depth: Math.max(0, lake.level - targetHeight) * Math.max(0.2, finalCoverage),
                 surfaceY: lake.level,
                 shore: finalCoverage,
+                bank: createBankData(bankCoverage, bankSteepness),
                 flowX: 0,
                 flowZ: 0
             };
@@ -556,6 +589,7 @@ export function applyWaterToTerrainSample(sample) {
     );
     const actualDepth = water.surfaceY - carvedHeight;
     sample.height = carvedHeight;
+    sample.bank = water.bank ?? null;
 
     if (water.coverage <= 0.001 || actualDepth <= 0.035) {
         sample.water = null;
