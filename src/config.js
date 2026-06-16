@@ -18,6 +18,11 @@ export const CONFIG = {
         distanciaChunksUrgentesMovendo: 10,
         tempoMontagemFilaChunksMs: 1.2,
         tempoMontagemFilaChunksMovendoMs: 0.6,
+        saiaBordas: {
+            ativa: false,
+            profundidade: 1.25,
+            passoMaximo: 2
+        },
         lodChunks: [
             { distancia: 6, passoTerreno: 16 },
             { distancia: 8, passoTerreno: 16 },
@@ -55,6 +60,10 @@ export const CONFIG = {
         chunksPorFrame: 2,
         intervaloAtualizacaoMs: 350,
         passoMalha: 2.0,
+        passoTerrenoBordas: 2,
+        distanciaRefinoBordasChunks: 8,
+        amostrasRefinoBordas: 5,
+        raioRefinoBordasChunks: 20,
         elevacaoSuperficie: -0.08,
         nivelSuperficie: -3.0,
         nivelMaximoSuperficie: 0,

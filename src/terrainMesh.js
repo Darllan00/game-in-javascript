@@ -19,7 +19,10 @@ const BANK_SAND_MAX_STEEPNESS = BANK_CONFIG.areiaAteInclinacao ?? 0.62;
 const SHALLOW_BED_DEPTH = 2.4;
 const colorBuffer = new THREE.Color();
 const tempColor = new THREE.Color();
-const TERRAIN_SKIRT_DEPTH = 32;
+const TERRAIN_SKIRT_CONFIG = CONFIG.terreno.saiaBordas ?? {};
+const TERRAIN_SKIRT_ENABLED = TERRAIN_SKIRT_CONFIG.ativa === true;
+const TERRAIN_SKIRT_DEPTH = Math.max(0, TERRAIN_SKIRT_CONFIG.profundidade ?? 2);
+const TERRAIN_SKIRT_MAX_STEP = Math.max(0, TERRAIN_SKIRT_CONFIG.passoMaximo ?? Infinity);
 
 function getTerrainColor(sample, y, target) {
     const { weights: w } = sample;
@@ -162,41 +165,43 @@ export function createChunkTerrainGeometry(startX, startZ, endX, endZ, sampleTer
         }
     }
 
-    function pushSkirtVertex(topIndex) {
-        const positionOffset = topIndex * 3;
-        const colorOffset = topIndex * 3;
-        const index = pushVertex(
-            positions[positionOffset],
-            positions[positionOffset + 1] - TERRAIN_SKIRT_DEPTH,
-            positions[positionOffset + 2],
-            tempColor.setRGB(colors[colorOffset], colors[colorOffset + 1], colors[colorOffset + 2])
-        );
-        const normalOffset = index * 3;
-        normals[normalOffset] = normals[positionOffset];
-        normals[normalOffset + 1] = normals[positionOffset + 1];
-        normals[normalOffset + 2] = normals[positionOffset + 2];
-        return index;
-    }
+    if (TERRAIN_SKIRT_ENABLED && TERRAIN_SKIRT_DEPTH > 0 && terrainStep <= TERRAIN_SKIRT_MAX_STEP) {
+        function pushSkirtVertex(topIndex) {
+            const positionOffset = topIndex * 3;
+            const colorOffset = topIndex * 3;
+            const index = pushVertex(
+                positions[positionOffset],
+                positions[positionOffset + 1] - TERRAIN_SKIRT_DEPTH,
+                positions[positionOffset + 2],
+                tempColor.setRGB(colors[colorOffset], colors[colorOffset + 1], colors[colorOffset + 2])
+            );
+            const normalOffset = index * 3;
+            normals[normalOffset] = normals[positionOffset];
+            normals[normalOffset + 1] = normals[positionOffset + 1];
+            normals[normalOffset + 2] = normals[positionOffset + 2];
+            return index;
+        }
 
-    function addSkirtSegment(topA, topB) {
-        const bottomA = pushSkirtVertex(topA);
-        const bottomB = pushSkirtVertex(topB);
-        indices.push(
-            topA, bottomA, topB,
-            topB, bottomA, bottomB,
-            topB, bottomA, topA,
-            bottomB, bottomA, topB
-        );
-    }
+        function addSkirtSegment(topA, topB) {
+            const bottomA = pushSkirtVertex(topA);
+            const bottomB = pushSkirtVertex(topB);
+            indices.push(
+                topA, bottomA, topB,
+                topB, bottomA, bottomB,
+                topB, bottomA, topA,
+                bottomB, bottomA, topB
+            );
+        }
 
-    for (let column = 0; column < widthSegments; column++) {
-        addSkirtSegment(topVertexIndices[0][column + 1], topVertexIndices[0][column]);
-        addSkirtSegment(topVertexIndices[depthSegments][column], topVertexIndices[depthSegments][column + 1]);
-    }
+        for (let column = 0; column < widthSegments; column++) {
+            addSkirtSegment(topVertexIndices[0][column + 1], topVertexIndices[0][column]);
+            addSkirtSegment(topVertexIndices[depthSegments][column], topVertexIndices[depthSegments][column + 1]);
+        }
 
-    for (let row = 0; row < depthSegments; row++) {
-        addSkirtSegment(topVertexIndices[row][0], topVertexIndices[row + 1][0]);
-        addSkirtSegment(topVertexIndices[row + 1][widthSegments], topVertexIndices[row][widthSegments]);
+        for (let row = 0; row < depthSegments; row++) {
+            addSkirtSegment(topVertexIndices[row][0], topVertexIndices[row + 1][0]);
+            addSkirtSegment(topVertexIndices[row + 1][widthSegments], topVertexIndices[row][widthSegments]);
+        }
     }
 
     const geometry = new THREE.BufferGeometry();

@@ -5,9 +5,10 @@ function el(tag, className, text) {
     return node;
 }
 
-function sortAscending(players) {
+function sortByScore(players) {
     return [...players].sort((a, b) => {
-        if ((a.score ?? 0) !== (b.score ?? 0)) return (a.score ?? 0) - (b.score ?? 0);
+        if ((a.score ?? 0) !== (b.score ?? 0)) return (b.score ?? 0) - (a.score ?? 0);
+        if ((a.kills ?? 0) !== (b.kills ?? 0)) return (b.kills ?? 0) - (a.kills ?? 0);
         return String(a.name || '').localeCompare(String(b.name || ''));
     });
 }
@@ -125,7 +126,7 @@ export function createOnlineHud({
 
     function renderRosterList(target, players, withPlace = false) {
         target.replaceChildren();
-        const ordered = sortAscending(players);
+        const ordered = sortByScore(players);
         ordered.forEach((player) => {
             const item = el('li', 'online-roster-item');
             if (player.id === state.localId) item.classList.add('is-me');

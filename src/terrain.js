@@ -64,6 +64,13 @@ const SUPER_CHUNK_COVERAGE_DISTANCE = Math.min(
 const SUPER_CHUNK_COVERAGE_PRIORITY_BOOST = CONFIG.terreno.prioridadeSuperChunksCobertura ?? 10;
 const DATA_MAP_MEDIUM_ROUGHNESS = TERRAIN_DATA_MAP_CONFIG.prioridadeRugosidadeMedia ?? 28;
 const DATA_MAP_HIGH_ROUGHNESS = TERRAIN_DATA_MAP_CONFIG.prioridadeRugosidadeAlta ?? 70;
+const WATER_EDGE_TERRAIN_STEP = Math.max(
+    1,
+    CONFIG.agua?.passoTerrenoBordas ?? CONFIG.terreno.passoTerreno ?? 2
+);
+const WATER_EDGE_TERRAIN_DISTANCE = Math.max(0, CONFIG.agua?.distanciaRefinoBordasChunks ?? 8);
+const WATER_EDGE_PROBE_COUNT = Math.max(3, CONFIG.agua?.amostrasRefinoBordas ?? 5);
+const WATER_EDGE_REFINEMENT_RADIUS = Math.max(0, CONFIG.agua?.raioRefinoBordasChunks ?? 1);
 
 const WORLD_MIN = -CONFIG.terreno.tamanhoGrade / 2;
 const WORLD_MAX = CONFIG.terreno.tamanhoGrade / 2;
@@ -195,6 +202,8 @@ export function createTerrain(scene, diagnostics, options = {}) {
     const macroChunks = new Map();
     const retiredChunks = new Map();
     const sharedSampleCache = createTerrainSampleCache(TERRAIN_SAMPLE_CACHE_LIMIT);
+    const waterEdgeChunkCache = new Map();
+    const waterEdgeNeighborhoodCache = new Map();
     let chunkLifecycle = null;
     let chunkLoadQueue = [];
     const queuedChunkKeys = new Set();
@@ -418,8 +427,64 @@ export function createTerrain(scene, diagnostics, options = {}) {
         return getTerrainStepForDistance(Math.max(0, distance - LOD_UPGRADE_MARGIN_CHUNKS));
     }
 
+    function chunkHasWaterEdge(cx, cz) {
+        const key = getChunkKey(cx, cz);
+        if (waterEdgeChunkCache.has(key)) return waterEdgeChunkCache.get(key);
+
+        const { startX, startZ, endX, endZ } = getChunkBounds(cx, cz, CHUNK_SIZE, WORLD_MIN, WORLD_MAX);
+        let hasWaterEdge = false;
+
+        for (let row = 0; row < WATER_EDGE_PROBE_COUNT && !hasWaterEdge; row++) {
+            const zRatio = WATER_EDGE_PROBE_COUNT === 1 ? 0.5 : row / (WATER_EDGE_PROBE_COUNT - 1);
+            const z = startZ + (endZ - startZ) * zRatio;
+            for (let column = 0; column < WATER_EDGE_PROBE_COUNT; column++) {
+                const xRatio = WATER_EDGE_PROBE_COUNT === 1 ? 0.5 : column / (WATER_EDGE_PROBE_COUNT - 1);
+                const x = startX + (endX - startX) * xRatio;
+                const sample = getSharedCachedSample(sharedSampleCache, x, z, createTerrainHeightSample, 'waterEdgeProbe');
+                const waterCoverage = sample.water?.coverage ?? 0;
+                const waterDepth = sample.water?.depth ?? 0;
+                const bankCoverage = sample.bank?.coverage ?? 0;
+                if ((waterCoverage > 0.01 && waterDepth > 0.03) || bankCoverage > 0.01) {
+                    hasWaterEdge = true;
+                    break;
+                }
+            }
+        }
+
+        waterEdgeChunkCache.set(key, hasWaterEdge);
+        return hasWaterEdge;
+    }
+
+    function chunkIsNearWaterEdge(cx, cz) {
+        const key = getChunkKey(cx, cz);
+        if (waterEdgeNeighborhoodCache.has(key)) return waterEdgeNeighborhoodCache.get(key);
+
+        let isNearWaterEdge = false;
+        for (let dz = -WATER_EDGE_REFINEMENT_RADIUS; dz <= WATER_EDGE_REFINEMENT_RADIUS; dz++) {
+            for (let dx = -WATER_EDGE_REFINEMENT_RADIUS; dx <= WATER_EDGE_REFINEMENT_RADIUS; dx++) {
+                if (chunkHasWaterEdge(cx + dx, cz + dz)) {
+                    isNearWaterEdge = true;
+                    break;
+                }
+            }
+            if (isNearWaterEdge) break;
+        }
+
+        waterEdgeNeighborhoodCache.set(key, isNearWaterEdge);
+        return isNearWaterEdge;
+    }
+
     function getDesiredTerrainStepForChunk(cx, cz) {
-        return getDesiredTerrainStepForDistance(getChunkDistance(cx, cz));
+        const distance = getChunkDistance(cx, cz);
+        const baseStep = getDesiredTerrainStepForDistance(distance);
+        if (
+            baseStep > WATER_EDGE_TERRAIN_STEP
+            && distance <= WATER_EDGE_TERRAIN_DISTANCE
+            && chunkIsNearWaterEdge(cx, cz)
+        ) {
+            return WATER_EDGE_TERRAIN_STEP;
+        }
+        return baseStep;
     }
 
     function getDataMapPriorityBoost(cx, cz) {
@@ -449,7 +514,7 @@ export function createTerrain(scene, diagnostics, options = {}) {
         const chunkKey = getChunkKey(cx, cz);
         restoreRetiredChunk(chunkKey);
         const visibleDistance = getChunkDistance(cx, cz);
-        const terrainStep = getDesiredTerrainStepForDistance(visibleDistance);
+        const terrainStep = getDesiredTerrainStepForChunk(cx, cz);
         const variantKey = getChunkVariantKey(cx, cz, terrainStep);
         const chunk = chunks.get(chunkKey);
 

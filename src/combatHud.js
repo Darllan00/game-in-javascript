@@ -66,7 +66,11 @@ function createPlayerViewport(player) {
 }
 
 function formatHealth(vitals) {
-    return `${Math.ceil(vitals.health)} / ${Math.ceil(vitals.maxHealth)}`;
+    const health = Number.isFinite(vitals?.health) ? vitals.health : 0;
+    const maxHealth = Number.isFinite(vitals?.maxHealth) && vitals.maxHealth > 0
+        ? vitals.maxHealth
+        : 100;
+    return `${Math.ceil(health)} / ${Math.ceil(maxHealth)}`;
 }
 
 function formatStatus(player) {
@@ -81,15 +85,22 @@ function getBreathRatio(vitals) {
     return Math.max(0, 1 - vitals.underwaterTime / DROWNING_SAFE_TIME);
 }
 
+function clampRatio(value, fallback = 0) {
+    if (!Number.isFinite(value)) return fallback;
+    return Math.max(0, Math.min(1, value));
+}
+
 function updateViewportLayout(viewport, index, count) {
     if (count <= 1) {
         viewport.style.left = '0%';
-        viewport.style.width = '100%';
+        viewport.style.right = '0%';
+        viewport.style.width = 'auto';
         return;
     }
 
     const width = 100 / count;
     viewport.style.left = `${index * width}%`;
+    viewport.style.right = `${100 - (index + 1) * width}%`;
     viewport.style.width = `${width}%`;
 }
 
@@ -107,11 +118,12 @@ export function createCombatHud() {
         players.forEach((player, index) => {
             if (!player?.vitals) return;
 
-            activeIds.add(player.id);
-            let item = viewports.get(player.id);
+            const playerId = player.id ?? `player-${index + 1}`;
+            activeIds.add(playerId);
+            let item = viewports.get(playerId);
             if (!item) {
-                item = createPlayerViewport(player);
-                viewports.set(player.id, item);
+                item = createPlayerViewport({ ...player, id: playerId });
+                viewports.set(playerId, item);
                 root.appendChild(item.viewport);
             }
 
@@ -120,20 +132,20 @@ export function createCombatHud() {
             const healthRatio = player.vitals.maxHealth > 0
                 ? player.vitals.health / player.vitals.maxHealth
                 : 0;
-            const breathRatio = getBreathRatio(player.vitals);
-            const dashRatio = Math.max(0, Math.min(1, player.dash?.progress ?? 1));
+            const breathRatio = clampRatio(getBreathRatio(player.vitals), 1);
+            const dashRatio = clampRatio(player.dash?.progress ?? 1, 1);
 
             item.viewport.classList.toggle('is-dead', player.vitals.isDead);
             item.row.classList.toggle('is-dead', player.vitals.isDead);
             item.row.classList.toggle('is-underwater', player.vitals.isUnderwater);
             item.row.classList.toggle('is-dashing', player.dash?.isActive === true);
-            item.label.textContent = `${player.label}: ${formatHealth(player.vitals)}`;
-            item.healthFill.style.width = `${Math.max(0, Math.min(1, healthRatio)) * 100}%`;
+            item.label.textContent = `${player.label || `Player ${index + 1}`}: ${formatHealth(player.vitals)}`;
+            item.healthFill.style.width = `${clampRatio(healthRatio) * 100}%`;
             item.breathFill.style.width = `${breathRatio * 100}%`;
             item.dashFill.style.width = `${dashRatio * 100}%`;
             item.status.textContent = formatStatus(player);
             item.deathTitle.textContent = players.length > 1
-                ? `${player.label} morreu`
+                ? `${player.label || `Player ${index + 1}`} morreu`
                 : 'Voce morreu';
         });
 

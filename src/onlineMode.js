@@ -4,7 +4,7 @@ import { CONFIG } from './config.js';
 import { updatePlayerPhysics } from './physics.js';
 import { createPlayerVitals } from './playerVitals.js';
 import { createBowState, getBowHudState, setBowHeld, updateBowState } from './bow.js';
-import { createBowView } from './bowView.js';
+import { createBowView, createCarriedBow } from './bowView.js';
 import { createDashState, getDashHudState, updateDashInput, updateDashState } from './dash.js';
 import { createHost, createClient, MAX_PLAYERS } from './net.js';
 import { createOnlineHud } from './onlineHud.js';
@@ -38,7 +38,9 @@ function createRemoteBlock(color) {
     body.castShadow = false;
     body.receiveShadow = false;
     group.add(body);
-    return { group, body, geometry, material };
+    const carriedBow = createCarriedBow();
+    group.add(carriedBow.object);
+    return { group, body, geometry, material, carriedBow };
 }
 
 export function createOnlineMode({
@@ -78,6 +80,7 @@ export function createOnlineMode({
     let wasDead = false;
     let deathHandled = false;
     let lastArrowKillerId = null;
+    let finalConnectionStatus = null;
 
     // ---- host authoritative state ----
     const roster = new Map();
@@ -143,7 +146,7 @@ export function createOnlineMode({
             },
             onData: handleClientData,
             onClose() {
-                hud.setStatus('Conexao com a sala encerrada.');
+                hud.setStatus(finalConnectionStatus || 'Conexao com a sala encerrada.');
             },
             onError(err) {
                 hud.setStatus(`Falha de conexao: ${err?.type || err?.message || err}`);
@@ -163,8 +166,14 @@ export function createOnlineMode({
         switch (data.t) {
             case 'join': {
                 if (roster.has(conn.peer)) break;
+                if (match.active) {
+                    host.sendTo(conn, { t: 'busy' });
+                    window.setTimeout(() => conn.close?.(), 80);
+                    break;
+                }
                 if (roster.size >= MAX_PLAYERS) {
                     host.sendTo(conn, { t: 'full' });
+                    window.setTimeout(() => conn.close?.(), 80);
                     break;
                 }
                 roster.set(conn.peer, {
@@ -298,7 +307,8 @@ export function createOnlineMode({
                 yaw: s.yaw ?? 0,
                 pitch: s.pitch ?? 0,
                 isDead: Boolean(s.isDead),
-                moving: Boolean(s.moving)
+                moving: Boolean(s.moving),
+                bow: s.bow ?? null
             };
         });
         const snap = { t: 'snapshot', players, match: { active: match.active, alive: match.alive.size } };
@@ -316,7 +326,12 @@ export function createOnlineMode({
                 hud.setStatus('Na sala. Aguarde o host iniciar.');
                 break;
             case 'full':
-                hud.setStatus('Sala cheia (maximo de 10 jogadores).');
+                finalConnectionStatus = 'Sala cheia (maximo de 10 jogadores).';
+                hud.setStatus(finalConnectionStatus);
+                break;
+            case 'busy':
+                finalConnectionStatus = 'Partida em andamento. Tente entrar na proxima rodada.';
+                hud.setStatus(finalConnectionStatus);
                 break;
             case 'snapshot':
                 applySnapshot(data);
@@ -362,6 +377,7 @@ export function createOnlineMode({
         const entry = remotes.get(id);
         if (!entry) return;
         scene.remove(entry.group);
+        entry.carriedBow?.dispose();
         entry.geometry.dispose();
         entry.material.dispose();
         remotes.delete(id);
@@ -381,6 +397,7 @@ export function createOnlineMode({
             entry.group.rotation.y = p.yaw ?? 0;
             entry.target.vitals.isDead = Boolean(p.isDead);
             entry.group.visible = !p.isDead;
+            entry.carriedBow?.update(p.bow, !p.isDead);
         }
         for (const id of [...remotes.keys()]) {
             if (!seen.has(id)) removeRemote(id);
@@ -579,7 +596,7 @@ export function createOnlineMode({
     // ---------------------------------------------------------------
     // Networking tick
     // ---------------------------------------------------------------
-    function netTick(delta, isMoving) {
+    function netTick(delta, isMoving, bowHud) {
         cameraEuler.setFromQuaternion(camera.quaternion);
         const myState = {
             x: player.position.x,
@@ -588,7 +605,8 @@ export function createOnlineMode({
             yaw: cameraEuler.y,
             pitch: cameraEuler.x,
             isDead: localVitals.isDead,
-            moving: isMoving
+            moving: isMoving,
+            bow: bowHud ?? getBowHudState(bow)
         };
 
         netAccum += delta;
@@ -665,11 +683,11 @@ export function createOnlineMode({
             shots.push(remoteShotQueue.shift());
         }
 
-        netTick(delta, isMoving);
+        netTick(delta, isMoving, bowHud);
         updateRemotes(delta);
 
         const localPlayerInfo = {
-            id: localId,
+            id: 'local',
             label: myName,
             position: player.position,
             vitals: localVitals,
