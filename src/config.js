@@ -123,8 +123,8 @@ export const CONFIG = {
             alturaMaximaCorte: 9.5
         },
         material: {
-            transparenciaRasa: 0.42,
-            transparenciaFunda: 0.68,
+            transparenciaRasa: 0.52,
+            transparenciaFunda: 0.75,
             velocidadeOnda: 0.92,
             amplitudeOnda: 0.6,
             reflexoCeu: 0.42,
@@ -135,9 +135,9 @@ export const CONFIG = {
         }
     },
     movimento: {
-        velocidade: 25,
+        velocidade: 15,
         gravidade: 30,
-        pulo: 50,
+        pulo: 20,
         alturaMaximaPasso: 1.35
     },
     mecanicas: {
@@ -157,16 +157,16 @@ export const CONFIG = {
             danoMaximo: 100
         },
         arco: {
-            niveis: 4,
+            niveis: 5,
             tempoPorNivel: 0.5,
-            velocidades: [46, 64, 84, 108],
-            danos: [15, 25, 37.5, 50],
+            velocidades: [46, 64, 84, 108, 145],
+            danos: [15, 25, 37.5, 50, 67.5],
             gravidade: 13,
             tempoVida: 11,
-            maxFlechasAtivas: 64,
+            maxFlechasAtivas: 32,
             raioColisao: 0.18,
             distanciaSpawn: 1.05,
-            tempoCravadaNoTerreno: 24
+            tempoCravadaNoTerreno: 10
         },
         dash: {
             multiplicadorVelocidade: 3,
@@ -213,7 +213,7 @@ export const CONFIG = {
         }
     },
     cicloDiaNoite: {
-        duracaoMinutos: 2,
+        duracaoMinutos: 5,
         atualizacoesPorSegundo: 12,
         raioAstros: 900,
         quantidadeEstrelas: 300
@@ -236,7 +236,7 @@ export const CONFIG = {
         ventoApenasParado: true,
         atualizarEnquantoMovendo: true,
         intervaloAtualizacaoMovendoMs: 650,
-        distanciaMovendoChunks: 8,
+        distanciaMovendoChunks: 6,
         recuperacaoAposMovimentoMs: 120,
         intervaloAtualizacaoParadoMs: 100,
         tilesRecuperacaoParadoPorAtualizacao: 2,
@@ -245,7 +245,7 @@ export const CONFIG = {
         tilesRemovidosPorFrame: 32,
         tempoGeracaoTilesMs: 3.0,
         distanciaChunks: 8,
-        tufosPorChunk: 4800,
+        tufosPorChunk: 2800,
         tilesPorFrame: 1,
         segmentos: 3,
         alturaMin: 0.55,

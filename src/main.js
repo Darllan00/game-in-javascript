@@ -11,9 +11,18 @@ import { createTrees } from './trees.js';
 import { createArrowSystem } from './arrowSystem.js';
 import { createCombatHud } from './combatHud.js';
 import { CONFIG } from './config.js';
-import { GAME_MODE, buildModeUrl, getGameMode } from './gameModes.js';
+import {
+    GAME_MODE,
+    buildModeUrl,
+    getGameMode,
+    getOnlineParams,
+    buildOnlineHostUrl,
+    buildOnlineJoinUrl
+} from './gameModes.js';
 import { createSinglePlayerMode } from './singlePlayerMode.js';
 import { createLocalCoopMode } from './localCoopMode.js';
+import { createOnlineMode } from './onlineMode.js';
+import { generateRoomCode, fetchRoomSeed } from './net.js';
 import { hideLoadingScreen, showLoadingScreen, updateLoadingScreen } from './loadingScreen.js';
 
 const worldSeed = resolveWorldSeed();
@@ -108,6 +117,69 @@ singleModeButton?.addEventListener('click', (event) => {
 coopModeButton?.addEventListener('click', (event) => {
     event.stopPropagation();
     window.location.href = buildModeUrl(GAME_MODE.LOCAL_COOP).toString();
+});
+
+const onlineNameInput = document.getElementById('online-name');
+const onlineHostButton = document.getElementById('online-host');
+const onlineJoinToggle = document.getElementById('online-join-toggle');
+const onlineJoinPanel = document.getElementById('online-join-panel');
+const onlineJoinCode = document.getElementById('online-join-code');
+const onlineJoinConfirm = document.getElementById('online-join-confirm');
+const onlineJoinStatus = document.getElementById('online-join-status');
+
+const STORED_NAME_KEY = 'mundo3d-online-name';
+
+if (onlineNameInput) {
+    try {
+        const saved = localStorage.getItem(STORED_NAME_KEY);
+        if (saved) onlineNameInput.value = saved;
+    } catch {
+        /* noop */
+    }
+}
+
+function persistOnlineName() {
+    const name = (onlineNameInput?.value || '').trim();
+    if (name) {
+        try {
+            localStorage.setItem(STORED_NAME_KEY, name);
+        } catch {
+            /* noop */
+        }
+    }
+    return name;
+}
+
+onlineHostButton?.addEventListener('click', (event) => {
+    event.stopPropagation();
+    persistOnlineName();
+    const code = generateRoomCode();
+    window.location.href = buildOnlineHostUrl(code, worldSeed.text).toString();
+});
+
+onlineJoinToggle?.addEventListener('click', (event) => {
+    event.stopPropagation();
+    if (!onlineJoinPanel) return;
+    onlineJoinPanel.style.display = onlineJoinPanel.style.display === 'flex' ? 'none' : 'flex';
+});
+
+onlineJoinConfirm?.addEventListener('click', async (event) => {
+    event.stopPropagation();
+    const code = (onlineJoinCode?.value || '').trim().toUpperCase();
+    if (!code) {
+        if (onlineJoinStatus) onlineJoinStatus.textContent = 'Digite o codigo da sala.';
+        return;
+    }
+    persistOnlineName();
+    if (onlineJoinStatus) onlineJoinStatus.textContent = 'Procurando sala...';
+    onlineJoinConfirm.disabled = true;
+    try {
+        const seed = await fetchRoomSeed(code);
+        window.location.href = buildOnlineJoinUrl(code, seed).toString();
+    } catch {
+        if (onlineJoinStatus) onlineJoinStatus.textContent = 'Sala nao encontrada ou indisponivel.';
+        onlineJoinConfirm.disabled = false;
+    }
 });
 
 const clock = new THREE.Clock();
@@ -213,8 +285,8 @@ function warmUpWorldBeforeStart(focusPosition) {
     return startWarmupPromise;
 }
 
-const mode = gameMode === GAME_MODE.LOCAL_COOP
-    ? createLocalCoopMode({
+function createActiveMode() {
+    const sharedOptions = {
         scene,
         camera,
         renderer,
@@ -222,16 +294,34 @@ const mode = gameMode === GAME_MODE.LOCAL_COOP
         getSample,
         resolveTreeCollision: trees.resolveTrunkCollision,
         requestStart: warmUpWorldBeforeStart
-    })
-    : createSinglePlayerMode({
-        scene,
-        camera,
-        renderer,
-        getHeight,
-        getSample,
-        resolveTreeCollision: trees.resolveTrunkCollision,
-        requestStart: warmUpWorldBeforeStart
-    });
+    };
+
+    if (gameMode === GAME_MODE.ONLINE) {
+        const { room, isHost } = getOnlineParams();
+        let storedName = '';
+        try {
+            storedName = (localStorage.getItem('mundo3d-online-name') || '').trim();
+        } catch {
+            storedName = '';
+        }
+        const playerName = storedName || (isHost ? 'Host' : 'Jogador');
+        return createOnlineMode({
+            ...sharedOptions,
+            room,
+            isHost,
+            seedText: worldSeed.text,
+            playerName
+        });
+    }
+
+    if (gameMode === GAME_MODE.LOCAL_COOP) {
+        return createLocalCoopMode(sharedOptions);
+    }
+
+    return createSinglePlayerMode(sharedOptions);
+}
+
+const mode = createActiveMode();
 
 if (mode.player) {
     mode.player.position.set(0, getHeight(0, 0) + CONFIG.terreno.alturaOlhos + 2, 0);
@@ -249,7 +339,7 @@ function loop() {
     for (const shot of modeState.shots ?? []) {
         arrows.shoot(shot);
     }
-    arrows.update(delta, modeState.players ?? []);
+    arrows.update(delta, modeState.arrowTargets ?? modeState.players ?? [], modeState.onHit);
     combatHud.update(modeState.players ?? []);
 
     if (modeState.isActive) {

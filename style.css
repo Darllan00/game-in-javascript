@@ -232,6 +232,263 @@ body {
     cursor: default;
 }
 
+#online-controls {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 18px;
+    cursor: default;
+}
+
+.online-buttons {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    justify-content: center;
+}
+
+#online-controls input,
+.online-name-input,
+.online-lobby input {
+    border: 1px solid rgba(255, 255, 255, 0.35);
+    background: rgba(255, 255, 255, 0.1);
+    color: white;
+    padding: 7px 10px;
+    font: inherit;
+    width: 200px;
+    box-sizing: border-box;
+}
+
+#online-controls button {
+    border: 1px solid rgba(255, 255, 255, 0.35);
+    background: rgba(255, 255, 255, 0.12);
+    color: white;
+    padding: 8px 12px;
+    font: inherit;
+    cursor: pointer;
+}
+
+#online-controls button:hover {
+    background: rgba(255, 255, 255, 0.2);
+}
+
+#online-join-panel {
+    display: none;
+    gap: 8px;
+    align-items: center;
+    justify-content: center;
+}
+
+#online-join-status {
+    min-height: 1em;
+    color: rgba(255, 230, 150, 0.92);
+    font-size: 0.85rem;
+}
+
+/* ----- Online in-game HUD ----- */
+.online-hud {
+    position: absolute;
+    inset: 0;
+    z-index: 22;
+    pointer-events: none;
+    font-family: 'Arial', sans-serif;
+    color: #fff;
+}
+
+.online-lobby,
+.online-results {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    width: min(440px, 92vw);
+    max-height: 88vh;
+    overflow: auto;
+    padding: 22px 24px;
+    background: rgba(8, 10, 16, 0.92);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    border-radius: 10px;
+    pointer-events: auto;
+}
+
+.online-lobby-title,
+.online-results-title {
+    margin: 0;
+    font-size: 1.4rem;
+}
+
+.online-code-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    justify-content: center;
+}
+
+.online-code-value {
+    font-size: 1.5rem;
+    font-weight: 700;
+    letter-spacing: 3px;
+    color: #ffd60a;
+}
+
+.online-name-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.online-roster-title,
+.online-results-subtitle {
+    align-self: flex-start;
+    font-size: 0.85rem;
+    color: rgba(255, 255, 255, 0.66);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.online-roster,
+.online-scoreboard-list,
+.online-placements {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.online-roster-item,
+.online-placement-item {
+    display: grid;
+    grid-template-columns: 1fr auto auto;
+    gap: 10px;
+    align-items: center;
+    padding: 6px 10px;
+    background: rgba(255, 255, 255, 0.06);
+    border-radius: 4px;
+    font-size: 0.95rem;
+}
+
+.online-placement-item {
+    grid-template-columns: 1fr auto;
+}
+
+.online-roster-item.is-me,
+.online-placement-item.is-me {
+    background: rgba(86, 156, 255, 0.22);
+}
+
+.online-roster-item.is-dead {
+    opacity: 0.5;
+}
+
+.online-roster-score {
+    font-weight: 700;
+    color: #ffd60a;
+}
+
+.online-roster-kills {
+    color: rgba(255, 255, 255, 0.6);
+    font-size: 0.82rem;
+}
+
+.online-placement-bonus {
+    font-weight: 700;
+    color: #35c759;
+}
+
+.online-roster-empty {
+    color: rgba(255, 255, 255, 0.5);
+    font-style: italic;
+}
+
+.online-actions {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+}
+
+.online-btn {
+    border: 1px solid rgba(255, 255, 255, 0.35);
+    background: rgba(255, 255, 255, 0.12);
+    color: #fff;
+    padding: 8px 14px;
+    font: inherit;
+    cursor: pointer;
+    border-radius: 4px;
+}
+
+.online-btn:hover {
+    background: rgba(255, 255, 255, 0.22);
+}
+
+.online-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.online-primary {
+    background: rgba(53, 199, 89, 0.28);
+    border-color: rgba(53, 199, 89, 0.6);
+    font-weight: 700;
+}
+
+.online-join-world {
+    background: rgba(86, 156, 255, 0.26);
+    border-color: rgba(86, 156, 255, 0.6);
+}
+
+.online-wait {
+    color: rgba(255, 255, 255, 0.7);
+    font-size: 0.9rem;
+}
+
+.online-status {
+    min-height: 1em;
+    color: rgba(255, 230, 150, 0.9);
+    font-size: 0.85rem;
+    text-align: center;
+}
+
+.online-hint {
+    font-size: 0.82rem;
+    color: rgba(255, 255, 255, 0.55);
+    text-align: center;
+}
+
+.online-scoreboard {
+    position: absolute;
+    top: 48px;
+    right: 14px;
+    display: none;
+    width: min(230px, 46vw);
+    padding: 8px 10px;
+    background: rgba(8, 10, 16, 0.55);
+    border-radius: 6px;
+    pointer-events: none;
+}
+
+.online-scoreboard-title {
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: rgba(255, 255, 255, 0.7);
+    margin-bottom: 6px;
+}
+
+.online-placement-name {
+    font-weight: 600;
+}
+
 #loading-screen {
     position: absolute;
     inset: 0;

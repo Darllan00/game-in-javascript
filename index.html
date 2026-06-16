@@ -10,7 +10,8 @@
       {
         "imports": {
           "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-          "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+          "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
+          "peerjs": "https://esm.sh/peerjs@1.5.4"
         }
       }
     </script>
@@ -32,6 +33,18 @@
         <div id="mode-controls" data-menu-control>
             <button id="single-mode" type="button">Single player</button>
             <button id="coop-mode" type="button">Coop local</button>
+        </div>
+        <div id="online-controls" data-menu-control>
+            <input id="online-name" type="text" placeholder="Seu nome" maxlength="16" autocomplete="off" />
+            <div class="online-buttons">
+                <button id="online-host" type="button">Abrir sala online</button>
+                <button id="online-join-toggle" type="button">Entrar em sala</button>
+            </div>
+            <div id="online-join-panel">
+                <input id="online-join-code" type="text" placeholder="Codigo da sala" maxlength="6" autocomplete="off" />
+                <button id="online-join-confirm" type="button">Entrar</button>
+            </div>
+            <div id="online-join-status"></div>
         </div>
         <p>Clique na tela para jogar</p>
         <p style="font-size: 0.8rem; margin-top: 20px;">(Pressione ESC para soltar o mouse)</p>

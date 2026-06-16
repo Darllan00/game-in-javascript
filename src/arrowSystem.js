@@ -183,7 +183,7 @@ export function createArrowSystem(scene, getHeight, diagnostics = null, options 
         return arrow;
     }
 
-    function update(delta, targets = []) {
+    function update(delta, targets = [], onHit = null) {
         const step = Math.min(delta, 0.05);
         for (let i = arrows.length - 1; i >= 0; i--) {
             const arrow = arrows[i];
@@ -210,6 +210,15 @@ export function createArrowSystem(scene, getHeight, diagnostics = null, options 
                 for (const target of targets) {
                     if (!target || target.id === arrow.ownerId || target.vitals?.isDead) continue;
                     if (!arrowHitsPlayer(arrow.previousPosition, arrow.mesh.position, target, arrowRadius)) continue;
+
+                    if (onHit) {
+                        const consumed = onHit(target, arrow) === true;
+                        if (consumed) {
+                            shouldRemove = true;
+                            break;
+                        }
+                        continue;
+                    }
 
                     target.vitals?.damage?.(arrow.damage, 'arrow');
                     shouldRemove = true;
