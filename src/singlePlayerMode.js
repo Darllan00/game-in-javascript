@@ -12,8 +12,10 @@ const PLAYER_ID = 'player-1';
 const PLAYER_LABEL = 'Player';
 const PLAYER_CONFIG = CONFIG.mecanicas?.jogador ?? {};
 const BOW_CONFIG = CONFIG.mecanicas?.arco ?? {};
+const CROUCH_CONFIG = CONFIG.mecanicas?.agachar ?? {};
 const shotDirection = new THREE.Vector3();
 const shotOrigin = new THREE.Vector3();
+const cameraEuler = new THREE.Euler(0, 0, 0, 'YXZ');
 
 export function createSinglePlayerMode({
     scene,
@@ -62,17 +64,27 @@ export function createSinglePlayerMode({
         };
     }
 
-    function getPlayerInfo(bowHudState = getBowHudState(bow), dashHudState = getDashHudState(dash)) {
+    function getPlayerInfo(
+        bowHudState = getBowHudState(bow),
+        dashHudState = getDashHudState(dash),
+        isCrouching = false
+    ) {
+        cameraEuler.setFromQuaternion(camera.quaternion);
+        const standingHeight = PLAYER_CONFIG.alturaColisao ?? 2.0;
         return {
             id: PLAYER_ID,
             label: PLAYER_LABEL,
             position: player.position,
+            yaw: cameraEuler.y,
+            isCrouching,
             vitals,
             bow: bowHudState,
             dash: dashHudState,
             hitbox: {
                 radius: PLAYER_CONFIG.raioColisao ?? 0.55,
-                height: PLAYER_CONFIG.alturaColisao ?? 2.0
+                height: isCrouching
+                    ? standingHeight * (CROUCH_CONFIG.multiplicadorAlturaHitbox ?? 0.62)
+                    : standingHeight
             }
         };
     }
@@ -81,13 +93,15 @@ export function createSinglePlayerMode({
         const shots = [];
         const canAct = controls.isLocked && !vitals.isDead;
         const isMoving = canAct && (keys.w || keys.a || keys.s || keys.d);
+        const isCrouching = canAct && keys.crouch;
 
-        updateDashInput(dash, canAct && keys.shift && isMoving, canAct && isMoving);
+        updateDashInput(dash, canAct && !isCrouching && keys.shift && isMoving, canAct && isMoving);
         const movementSpeedMultiplier = updateDashState(dash, delta);
 
         let landing = null;
         if (canAct) {
             landing = updatePhysics(delta, controls, player, keys, state, getHeight, movementSpeedMultiplier, {
+                getSample,
                 resolveHorizontalCollision(position) {
                     resolveTreeCollision?.(position, PLAYER_CONFIG.raioColisao ?? 0.55);
                 }
@@ -107,7 +121,7 @@ export function createSinglePlayerMode({
         const dashHudState = getDashHudState(dash);
         bowView.update(bowHudState, controls.isLocked && !vitals.isDead);
 
-        const players = [getPlayerInfo(bowHudState, dashHudState)];
+        const players = [getPlayerInfo(bowHudState, dashHudState, isCrouching)];
 
         return {
             isActive: controls.isLocked,

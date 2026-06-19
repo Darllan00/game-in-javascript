@@ -17,9 +17,12 @@ function prepareViewMesh(mesh) {
     mesh.frustumCulled = false;
     mesh.renderOrder = 20;
     if (mesh.material) {
+        mesh.material.transparent = true;
+        mesh.material.opacity = 1;
         mesh.material.depthTest = false;
         mesh.material.depthWrite = false;
         mesh.material.toneMapped = false;
+        mesh.material.needsUpdate = true;
     }
 }
 

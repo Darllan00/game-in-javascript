@@ -9,6 +9,9 @@ const WATER_CONFIG = CONFIG.agua ?? {};
 const WATER_SURFACE_Y = CONFIG.terreno.nivelDoMar + (WATER_CONFIG.nivelSuperficie ?? 0);
 const WATER_RENDER_OFFSET = Math.min(WATER_CONFIG.elevacaoSuperficie ?? -6.08, -0.01);
 const EMPTY_WATER_CHUNK_CACHE_LIMIT = 4096;
+const WATER_EDGE_EXPAND_STEPS = Math.max(0, WATER_CONFIG.expansaoBordaMalha ?? 1);
+const WATER_EDGE_COVERAGE = Math.max(0.001, WATER_CONFIG.coberturaBordaMalha ?? 0.42);
+const WATER_EDGE_DEPTH = Math.max(0.01, WATER_CONFIG.profundidadeVisualBorda ?? 0.22);
 
 function rememberLimitedSetValue(set, value, limit) {
     set.delete(value);
@@ -25,14 +28,15 @@ function createWaterMaterial() {
     return new THREE.ShaderMaterial({
         uniforms: THREE.UniformsUtils.merge([
             THREE.UniformsLib.fog,
+            THREE.UniformsLib.lights,
             {
                 uTime: { value: 0 },
                 uWaveSpeed: { value: materialConfig.velocidadeOnda ?? 0.72 },
                 uWaveAmplitude: { value: materialConfig.amplitudeOnda ?? 0.055 },
                 uShallowAlpha: { value: materialConfig.transparenciaRasa ?? 0.42 },
                 uDeepAlpha: { value: materialConfig.transparenciaFunda ?? 0.78 },
-                uShallowColor: { value: new THREE.Color(0x6fc7d8) },
-                uDeepColor: { value: new THREE.Color(0x146286) },
+                uShallowColor: { value: new THREE.Color(0x347f95) },
+                uDeepColor: { value: new THREE.Color(0x082f4d) },
                 uFoamColor: { value: new THREE.Color(0xd8f4ed) },
                 uSunDirection: { value: sunDirection },
                 uMoonDirection: { value: moonDirection },
@@ -48,7 +52,9 @@ function createWaterMaterial() {
                 uSunSpecularStrength: { value: materialConfig.brilhoSol ?? 1.65 },
                 uMoonSpecularStrength: { value: materialConfig.brilhoLua ?? 0.75 },
                 uFoamStrength: { value: materialConfig.espuma ?? 0.2 },
-                uDepthContrast: { value: materialConfig.contrasteProfundidade ?? 1.08 }
+                uDepthContrast: { value: materialConfig.contrasteProfundidade ?? 1.08 },
+                uSurfaceShadowStrength: { value: materialConfig.opacidadeSombraSuperficie ?? 0.36 },
+                uSurfaceShadowAlphaBoost: { value: materialConfig.opacidadeExtraSombraSuperficie ?? 0.0 }
             }
         ]),
         vertexShader: `
@@ -68,6 +74,11 @@ function createWaterMaterial() {
             varying vec3 vWaterNormal;
             varying float vRipple;
             varying float vEdgeNoise;
+
+            #if defined( USE_SHADOWMAP ) && NUM_DIR_LIGHT_SHADOWS > 0
+                uniform mat4 directionalShadowMatrix[ NUM_DIR_LIGHT_SHADOWS ];
+                varying vec4 vDirectionalShadowCoord[ NUM_DIR_LIGHT_SHADOWS ];
+            #endif
 
             #include <fog_pars_vertex>
 
@@ -91,6 +102,14 @@ function createWaterMaterial() {
                 vec4 worldPosition = modelMatrix * vec4(transformedPosition, 1.0);
                 vec4 mvPosition = viewMatrix * worldPosition;
                 gl_Position = projectionMatrix * mvPosition;
+
+                #if defined( USE_SHADOWMAP ) && NUM_DIR_LIGHT_SHADOWS > 0
+                    #pragma unroll_loop_start
+                    for ( int i = 0; i < NUM_DIR_LIGHT_SHADOWS; i ++ ) {
+                        vDirectionalShadowCoord[ i ] = directionalShadowMatrix[ i ] * worldPosition;
+                    }
+                    #pragma unroll_loop_end
+                #endif
 
                 vDepth = aDepth;
                 vCoverage = aCoverage;
@@ -129,6 +148,8 @@ function createWaterMaterial() {
             uniform float uMoonSpecularStrength;
             uniform float uFoamStrength;
             uniform float uDepthContrast;
+            uniform float uSurfaceShadowStrength;
+            uniform float uSurfaceShadowAlphaBoost;
 
             varying float vDepth;
             varying float vCoverage;
@@ -139,7 +160,29 @@ function createWaterMaterial() {
             varying float vRipple;
             varying float vEdgeNoise;
 
+            #include <packing>
+            #include <shadowmap_pars_fragment>
             #include <fog_pars_fragment>
+
+            float getWaterSurfaceShadow() {
+                float shadowMask = 1.0;
+
+                #if defined( USE_SHADOWMAP ) && NUM_DIR_LIGHT_SHADOWS > 0
+                    #pragma unroll_loop_start
+                    for ( int i = 0; i < NUM_DIR_LIGHT_SHADOWS; i ++ ) {
+                        shadowMask *= getShadow(
+                            directionalShadowMap[ i ],
+                            directionalLightShadows[ i ].shadowMapSize,
+                            directionalLightShadows[ i ].shadowBias,
+                            directionalLightShadows[ i ].shadowRadius,
+                            vDirectionalShadowCoord[ i ]
+                        );
+                    }
+                    #pragma unroll_loop_end
+                #endif
+
+                return shadowMask;
+            }
 
             void main() {
                 float depthFactor = pow(smoothstep(0.15, 4.8, vDepth), uDepthContrast);
@@ -179,10 +222,15 @@ function createWaterMaterial() {
                 waterColor = mix(waterColor, skyReflection, fresnel * uSkyReflectionStrength);
                 waterColor += uSunColor * (sunSpec * uSunSpecularStrength + broadSun * 0.22);
                 waterColor += uMoonColor * moonSpec * uMoonSpecularStrength;
+                float surfaceShadow = getWaterSurfaceShadow();
+                float shadowVisibility = smoothstep(0.04, 0.36, noisyCoverage) * smoothstep(0.025, 0.55, vDepth);
+                float surfaceShadowAmount = (1.0 - surfaceShadow) * shadowVisibility;
+                waterColor *= 1.0 - uSurfaceShadowStrength * surfaceShadowAmount;
                 float foamMask = vFoam * (0.72 + vEdgeNoise * 0.16) * smoothstep(0.03, 0.44, noisyCoverage);
                 waterColor = mix(waterColor, uFoamColor, foamMask * uFoamStrength);
                 float edgeFade = smoothstep(0.001, 0.34, noisyCoverage) * smoothstep(0.001, 0.22, vDepth);
                 float alpha = mix(uShallowAlpha, uDeepAlpha, depthFactor) * edgeFade;
+                alpha = max(alpha, surfaceShadowAmount * uSurfaceShadowAlphaBoost);
 
                 gl_FragColor = vec4(waterColor, alpha);
 
@@ -194,7 +242,8 @@ function createWaterMaterial() {
         depthTest: true,
         side: THREE.DoubleSide,
         fog: true,
-        toneMapped: false
+        lights: true,
+        toneMapped: true
     });
 }
 
@@ -234,7 +283,6 @@ function createChunkWaterGeometry(cx, cz, getTerrainSample) {
         coverages.push(coverage);
         flows.push(water?.flowX ?? 0, water?.flowZ ?? 0);
         hasWater.push(edgeWater);
-        if (edgeWater) waterVertexCount++;
         return index;
     }
 
@@ -244,6 +292,60 @@ function createChunkWaterGeometry(cx, cz, getTerrainSample) {
             vertexIndices[row][column] = pushVertex(row, column);
         }
     }
+
+    function expandEdgeWater() {
+        for (let pass = 0; pass < WATER_EDGE_EXPAND_STEPS; pass++) {
+            const expanded = hasWater.slice();
+
+            for (let row = 0; row <= depthSegments; row++) {
+                for (let column = 0; column <= widthSegments; column++) {
+                    const index = vertexIndices[row][column];
+                    if (hasWater[index]) continue;
+
+                    let touchesWater = false;
+                    let flowX = 0;
+                    let flowZ = 0;
+                    let flowCount = 0;
+
+                    for (let dz = -1; dz <= 1 && !touchesWater; dz++) {
+                        const nr = row + dz;
+                        if (nr < 0 || nr > depthSegments) continue;
+
+                        for (let dx = -1; dx <= 1; dx++) {
+                            if (dx === 0 && dz === 0) continue;
+                            const nc = column + dx;
+                            if (nc < 0 || nc > widthSegments) continue;
+                            const neighbor = vertexIndices[nr][nc];
+                            if (!hasWater[neighbor]) continue;
+
+                            touchesWater = true;
+                            flowX += flows[neighbor * 2];
+                            flowZ += flows[neighbor * 2 + 1];
+                            flowCount++;
+                        }
+                    }
+
+                    if (!touchesWater) continue;
+
+                    expanded[index] = true;
+                    coverages[index] = Math.max(coverages[index], WATER_EDGE_COVERAGE);
+                    waterDepths[index] = Math.max(waterDepths[index], WATER_EDGE_DEPTH);
+                    if (flowCount > 0) {
+                        flows[index * 2] = flowX / flowCount;
+                        flows[index * 2 + 1] = flowZ / flowCount;
+                    }
+                }
+            }
+
+            for (let i = 0; i < expanded.length; i++) {
+                hasWater[i] = expanded[i];
+            }
+        }
+
+        waterVertexCount = hasWater.reduce((count, item) => count + (item ? 1 : 0), 0);
+    }
+
+    expandEdgeWater();
 
     for (let row = 0; row < depthSegments; row++) {
         for (let column = 0; column < widthSegments; column++) {
@@ -379,7 +481,8 @@ export function createWater(scene, getTerrainSample, diagnostics, options = {}) 
         mesh.frustumCulled = true;
         mesh.renderOrder = 2;
         mesh.castShadow = false;
-        mesh.receiveShadow = false;
+        mesh.receiveShadow = true;
+
         chunkGroup.add(mesh);
         activeChunks.set(item.key, mesh);
         return true;
@@ -435,6 +538,24 @@ export function createWater(scene, getTerrainSample, diagnostics, options = {}) 
         processQueue();
     }
 
+    function setVisibilityForFocus(position) {
+        const maxDistance = WATER_CONFIG.distanciaChunks ?? CONFIG.terreno.distanciaChunks;
+        const focusChunkX = Math.floor(position.x / CHUNK_SIZE);
+        const focusChunkZ = Math.floor(position.z / CHUNK_SIZE);
+
+        for (const [key, mesh] of activeChunks) {
+            const [cx, cz] = key.split(',').map(Number);
+            const distance = Math.max(Math.abs(cx - focusChunkX), Math.abs(cz - focusChunkZ));
+            mesh.visible = distance <= maxDistance;
+        }
+    }
+
+    function restoreVisibility() {
+        for (const mesh of activeChunks.values()) {
+            mesh.visible = true;
+        }
+    }
+
     function disposeChunk(chunk) {
         const key = getChunkKey(chunk.cx, chunk.cz);
         const mesh = activeChunks.get(key);
@@ -459,5 +580,5 @@ export function createWater(scene, getTerrainSample, diagnostics, options = {}) 
         material.dispose();
     }
 
-    return { updateForPlayers, disposeChunk, dispose };
+    return { updateForPlayers, setVisibilityForFocus, restoreVisibility, disposeChunk, dispose };
 }

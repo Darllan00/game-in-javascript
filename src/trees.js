@@ -677,8 +677,10 @@ export function createTrees(scene, getTerrainSample, diagnostics, options = {}) 
         }
     }
 
-    function refreshQueue(focuses) {
-        const maxDistance = getTreeDistance();
+    function refreshQueue(focuses, maxDistanceOverride = null) {
+        const maxDistance = maxDistanceOverride === null
+            ? getTreeDistance()
+            : Math.min(Math.max(0, maxDistanceOverride), getTreeDistance());
         for (const focus of focuses) {
             for (let dz = -maxDistance; dz <= maxDistance; dz++) {
                 for (let dx = -maxDistance; dx <= maxDistance; dx++) {
@@ -864,12 +866,12 @@ export function createTrees(scene, getTerrainSample, diagnostics, options = {}) 
         return treeConfig.chunksPorFrameParado ?? treeConfig.chunksPorFrame ?? 1;
     }
 
-    function processQueue(focuses, isPlayerMoving) {
+    function processQueue(focuses, isPlayerMoving, chunksPerFrameOverride = null) {
         if (!assetReady || assetFailed) return;
 
         let built = 0;
         let attempts = 0;
-        const chunksPerFrame = getChunksPerFrame(isPlayerMoving);
+        const chunksPerFrame = chunksPerFrameOverride ?? getChunksPerFrame(isPlayerMoving);
         const maxAttempts = Math.max(chunksPerFrame, treeConfig.tentativasFilaPorFrame ?? chunksPerFrame * 4);
         while (buildQueue.length && built < chunksPerFrame && attempts < maxAttempts) {
             const item = buildQueue.shift();
@@ -882,6 +884,28 @@ export function createTrees(scene, getTerrainSample, diagnostics, options = {}) 
                 built++;
             }
         }
+    }
+
+    function preloadForPlayers(deadline, playerPositions, maxDistanceOverride = null) {
+        const focuses = createTreeFocuses(playerPositions);
+        if (!focuses.length) return true;
+
+        lastLodFocuses = focuses;
+        if (!assetFailed) {
+            if (!assetReady) return false;
+            pruneBatches(focuses);
+            refreshQueue(focuses, maxDistanceOverride);
+            while (performance.now() < deadline && buildQueue.length) {
+                processQueue(focuses, false, treeConfig.chunksPorFrameParado ?? treeConfig.chunksPorFrame ?? 1);
+            }
+            updateBatchAnimations(focuses);
+        }
+
+        pruneLodBatches(focuses);
+        refreshLodQueue(focuses);
+        processLodQueue();
+        updateLodVisibilityForFocuses(focuses);
+        return buildQueue.length === 0;
     }
 
     function updateBatchAnimations(focuses) {
@@ -1078,6 +1102,7 @@ export function createTrees(scene, getTerrainSample, diagnostics, options = {}) 
 
     return {
         updateForPlayers,
+        preloadForPlayers,
         isPositionBlocked,
         getBlockersForChunk,
         getTrunkCollidersNear,

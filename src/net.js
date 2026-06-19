@@ -2,6 +2,7 @@ import { Peer } from 'peerjs';
 
 const ID_PREFIX = 'mundo3d-online-';
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const PEER_DEBUG_LEVEL = 0;
 export const MAX_PLAYERS = 10;
 
 export function generateRoomCode(length = 6) {
@@ -21,11 +22,11 @@ export function roomCodeToPeerId(code) {
 }
 
 function makePeer() {
-    return new Peer({ debug: 1 });
+    return new Peer({ debug: PEER_DEBUG_LEVEL });
 }
 
 export function createHost(code, handlers = {}) {
-    const peer = new Peer(roomCodeToPeerId(code), { debug: 1 });
+    const peer = new Peer(roomCodeToPeerId(code), { debug: PEER_DEBUG_LEVEL });
     const connections = new Map();
 
     peer.on('open', () => handlers.onReady?.(code));

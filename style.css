@@ -93,7 +93,7 @@ canvas {
 
 .combat-hud-cluster {
     position: absolute;
-    left: max(14px, env(safe-area-inset-left));
+    right: max(14px, env(safe-area-inset-right));
     bottom: max(14px, env(safe-area-inset-bottom));
     width: min(280px, calc(100% - 28px));
     max-width: calc(100% - 28px);
@@ -206,6 +206,105 @@ canvas {
     background: rgba(0, 0, 0, 0.42);
     color: rgba(255, 255, 255, 0.92);
     font: 700 22px/1.2 Arial, sans-serif;
+}
+
+#minimap-hud {
+    position: fixed;
+    inset: 0;
+    width: 100dvw;
+    height: 100dvh;
+    overflow: hidden;
+    pointer-events: none;
+    z-index: 12;
+}
+
+#underwater-effect {
+    position: fixed;
+    inset: 0;
+    width: 100dvw;
+    height: 100dvh;
+    overflow: hidden;
+    pointer-events: none;
+    z-index: 8;
+}
+
+.underwater-effect-viewport {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    min-width: 0;
+    overflow: hidden;
+}
+
+.underwater-effect-surface {
+    position: absolute;
+    inset: 0;
+    --underwater-depth-dark: 0;
+    --underwater-brightness: 1;
+    opacity: 0;
+    transition: opacity 120ms linear;
+    background:
+        linear-gradient(rgba(0, 10, 18, var(--underwater-depth-dark)), rgba(0, 10, 18, var(--underwater-depth-dark))),
+        radial-gradient(circle at 50% 42%, rgba(128, 224, 232, 0.2), rgba(20, 111, 140, 0.36) 58%, rgba(4, 31, 50, 0.72)),
+        linear-gradient(180deg, rgba(157, 237, 244, 0.1), rgba(5, 38, 64, 0.34));
+    backdrop-filter: blur(1.2px) saturate(0.78) contrast(0.9) brightness(var(--underwater-brightness));
+    box-shadow: inset 0 0 110px rgba(0, 22, 34, 0.82);
+}
+
+.underwater-effect-viewport.is-underwater .underwater-effect-surface {
+    animation: underwater-breathe 4.8s ease-in-out infinite;
+}
+
+@keyframes underwater-breathe {
+    0%,
+    100% {
+        transform: scale(1);
+    }
+    50% {
+        transform: scale(1.015);
+    }
+}
+
+.minimap-viewport {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    min-width: 0;
+    overflow: hidden;
+}
+
+.minimap-frame {
+    position: absolute;
+    left: max(14px, env(safe-area-inset-left));
+    bottom: max(14px, env(safe-area-inset-bottom));
+    width: 156px;
+    height: 156px;
+    border-radius: 50%;
+    overflow: hidden;
+    background: rgba(7, 12, 10, 0.48);
+    border: 2px solid rgba(255, 255, 255, 0.58);
+    box-shadow:
+        0 0 0 3px rgba(0, 0, 0, 0.28),
+        0 8px 18px rgba(0, 0, 0, 0.26);
+}
+
+.minimap-frame::after {
+    content: "";
+    position: absolute;
+    inset: 50% auto auto 50%;
+    width: 2px;
+    height: 18px;
+    transform: translate(-50%, -50%);
+    background: rgba(255, 255, 255, 0.68);
+    border-radius: 99px;
+}
+
+.minimap-canvas {
+    position: static;
+    display: block;
+    width: 156px !important;
+    height: 156px !important;
+    z-index: auto;
 }
 
 #menu {

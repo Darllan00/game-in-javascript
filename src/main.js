@@ -10,6 +10,8 @@ import { createGrass } from './grass.js';
 import { createTrees } from './trees.js';
 import { createArrowSystem } from './arrowSystem.js';
 import { createCombatHud } from './combatHud.js';
+import { createMinimapHud } from './minimapHud.js';
+import { createUnderwaterEffect } from './underwaterEffect.js';
 import { CONFIG } from './config.js';
 import {
     GAME_MODE,
@@ -43,6 +45,7 @@ const {
     getMacroWorldProgress,
     isMacroWorldReady,
     preloadMacroWorldStep,
+    preloadChunksForPlayers,
     setChunkLifecycle,
     updateChunksForPlayers,
     dispose
@@ -67,6 +70,8 @@ const arrows = createArrowSystem(scene, getHeight, diagnostics, {
     findTrunkImpact: trees.findTrunkImpact
 });
 const combatHud = createCombatHud();
+const minimapHud = createMinimapHud(getSample);
+const underwaterEffect = createUnderwaterEffect(getSample);
 setChunkLifecycle({
     onChunkDisposed(chunk) {
         water.disposeChunk(chunk);
@@ -217,6 +222,14 @@ function nextFrame() {
     return new Promise((resolve) => requestAnimationFrame(resolve));
 }
 
+function getWarmupFocus(focusPosition) {
+    if (focusPosition) return focusPosition;
+    if (mode.player?.position) return mode.player.position;
+    if (mode.players?.[0]?.group?.position) return mode.players[0].group.position;
+    if (mode.players?.[0]?.position) return mode.players[0].position;
+    return { x: 0, z: 0 };
+}
+
 function warmUpWorldBeforeStart(focusPosition) {
     if (didInitialWarmup) return null;
     if (startWarmupPromise) return startWarmupPromise;
@@ -227,19 +240,29 @@ function warmUpWorldBeforeStart(focusPosition) {
         const maxDurationMs = loadingConfig.duracaoMaximaMs ?? 10000;
         const minFrames = loadingConfig.framesMinimos ?? 45;
         const updatesPerFrame = Math.max(1, loadingConfig.atualizacoesPorFrame ?? 1);
+        const terrainPreloadBudgetMs = Math.max(0, loadingConfig.tempoTerrenoProximoMs ?? 0);
+        const vegetationBudgetMs = Math.max(0, loadingConfig.tempoVegetacaoMs ?? 0);
+        const grassPreloadDistance = loadingConfig.distanciaGramaChunks ?? null;
+        const treePreloadDistance = loadingConfig.distanciaArvoresChunks ?? null;
+        const terrainPreloadDistance = Math.max(grassPreloadDistance ?? 0, treePreloadDistance ?? 0);
         const macroBudgetMs = CONFIG.terreno.macroSuperChunks?.tempoGeracaoMs ?? 8;
         const dataMapBudgetMs = CONFIG.terreno.mapaDados?.tempoGeracaoMs ?? 6;
-        const focus = focusPosition ?? mode.player?.position ?? { x: 0, z: 0 };
+        const focus = getWarmupFocus(focusPosition);
         const focuses = [focus];
         const startedAt = performance.now();
         let frame = 0;
+        let initialTerrainReady = false;
+        let initialGrassReady = false;
+        let initialTreesReady = false;
 
         showLoadingScreen('Preparando terreno...');
 
         while (true) {
             const elapsedMs = performance.now() - startedAt;
+            const canKeepLoadingInitialArea = elapsedMs < maxDurationMs;
             const shouldKeepLoading = frame < minFrames
                 || elapsedMs < minDurationMs
+                || ((!initialTerrainReady || !initialGrassReady || !initialTreesReady) && canKeepLoadingInitialArea)
                 || (macroWorldEnabled && !isMacroWorldReady())
                 || (terrainDataMapEnabled && !terrainDataMap.isReady() && elapsedMs < maxDurationMs);
             if (!shouldKeepLoading) break;
@@ -269,6 +292,19 @@ function warmUpWorldBeforeStart(focusPosition) {
                 water.updateForPlayers(1 / 60, focuses);
                 trees.updateForPlayers(1 / 60, focuses, false);
                 grass.updateForPlayers(1 / 60, focuses, false);
+            }
+            if (terrainPreloadBudgetMs > 0 && terrainPreloadDistance > 0) {
+                initialTerrainReady = preloadChunksForPlayers?.(
+                    performance.now() + terrainPreloadBudgetMs,
+                    focuses,
+                    terrainPreloadDistance
+                ) ?? initialTerrainReady;
+            }
+            if (vegetationBudgetMs > 0 && initialTerrainReady) {
+                const treeDeadline = performance.now() + vegetationBudgetMs;
+                initialTreesReady = trees.preloadForPlayers?.(treeDeadline, focuses, treePreloadDistance) ?? true;
+                const grassDeadline = performance.now() + vegetationBudgetMs;
+                initialGrassReady = grass.preloadForPlayers?.(grassDeadline, focuses, grassPreloadDistance) ?? true;
             }
 
             mode.render(grass, trees);
@@ -333,14 +369,18 @@ function loop() {
 
     const delta = clock.getDelta();
     updateFpsCounter(delta);
-    dayNightCycle.update(delta);
 
     const modeState = mode.update(delta);
+    dayNightCycle.update(delta, modeState.focuses, {
+        updateShadowFocus: modeState.handlesShadowFocus !== true
+    });
     for (const shot of modeState.shots ?? []) {
         arrows.shoot(shot);
     }
     arrows.update(delta, modeState.arrowTargets ?? modeState.players ?? [], modeState.onHit);
     combatHud.update(modeState.players ?? []);
+    minimapHud.update(modeState, delta);
+    underwaterEffect.update(modeState, delta);
 
     if (modeState.isActive) {
         updateChunksForPlayers(modeState.focuses, modeState.isMoving);
@@ -349,7 +389,7 @@ function loop() {
     trees.updateForPlayers(delta, modeState.focuses, modeState.isActive && modeState.isMoving);
     grass.updateForPlayers(delta, modeState.focuses, modeState.isActive && modeState.isMoving);
 
-    mode.render(grass, trees);
+    mode.render(grass, trees, dayNightCycle, water);
 }
 
 loop();
@@ -366,6 +406,8 @@ window.addEventListener('beforeunload', () => {
     trees.dispose();
     arrows.dispose();
     combatHud.dispose();
+    minimapHud.dispose();
+    underwaterEffect.dispose();
     mode.dispose();
     dispose();
 });

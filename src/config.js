@@ -24,10 +24,7 @@ export const CONFIG = {
             passoMaximo: 2
         },
         lodChunks: [
-            { distancia: 6, passoTerreno: 16 },
-            { distancia: 8, passoTerreno: 16 },
-            { distancia: 12, passoTerreno: 16 },
-            { distancia: 9999, passoTerreno: 16 }
+            { distancia: 9999, passoTerreno: 2 }
         ],
         macroSuperChunks: {
             ativo: true,
@@ -60,10 +57,21 @@ export const CONFIG = {
         chunksPorFrame: 2,
         intervaloAtualizacaoMs: 350,
         passoMalha: 2.0,
+        expansaoBordaMalha: 1,
+        coberturaBordaMalha: 0.42,
+        profundidadeVisualBorda: 0.22,
+        fisica: {
+            multiplicadorMovimento: 0.55,
+            gravidade: 5.5,
+            arrastoVertical: 3.6,
+            velocidadeSubida: 5.8,
+            velocidadeQuedaMaxima: 4.8,
+            margemEntrada: 0.18
+        },
         passoTerrenoBordas: 2,
         distanciaRefinoBordasChunks: 8,
         amostrasRefinoBordas: 5,
-        raioRefinoBordasChunks: 20,
+        raioRefinoBordasChunks: 0,
         elevacaoSuperficie: -0.08,
         nivelSuperficie: -3.0,
         nivelMaximoSuperficie: 0,
@@ -132,8 +140,12 @@ export const CONFIG = {
             alturaMaximaCorte: 9.5
         },
         material: {
-            transparenciaRasa: 0.52,
-            transparenciaFunda: 0.75,
+            transparenciaRasa: 0.58,
+            transparenciaFunda: 0.82,
+            opacidadeMinimaSombra: 0,
+            opacidadeSombraSuperficie: 0.18,
+            opacidadeExtraSombraSuperficie: 0.18,
+            afastamentoSombraSuperficie: 0.018,
             velocidadeOnda: 0.92,
             amplitudeOnda: 0.6,
             reflexoCeu: 0.42,
@@ -141,6 +153,13 @@ export const CONFIG = {
             brilhoLua: 0.75,
             espuma: 0.2,
             contrasteProfundidade: 1.08
+        },
+        efeitoSubmerso: {
+            ativo: true,
+            opacidade: 0.38,
+            opacidadeProfunda: 0.82,
+            profundidadeEscurecimento: 9,
+            pulso: 0.035
         }
     },
     movimento: {
@@ -154,6 +173,12 @@ export const CONFIG = {
             vidaMaxima: 100,
             raioColisao: 0.55,
             alturaColisao: 2.0
+        },
+        agachar: {
+            multiplicadorVelocidade: 0.42,
+            alturaOlhos: 1.18,
+            multiplicadorAlturaHitbox: 0.62,
+            velocidadeAfundarAgua: 2.8
         },
         afogamento: {
             tempoSeguro: 10,
@@ -231,7 +256,11 @@ export const CONFIG = {
         duracaoMinimaMs: 1800,
         duracaoMaximaMs: 10000,
         framesMinimos: 75,
-        atualizacoesPorFrame: 2
+        atualizacoesPorFrame: 2,
+        tempoTerrenoProximoMs: 8,
+        tempoVegetacaoMs: 6,
+        distanciaGramaChunks: 2,
+        distanciaArvoresChunks: 3
     },
     vento: {
         direcaoX: 0.85,

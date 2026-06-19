@@ -6,7 +6,8 @@ export const keys = {
     s: false,
     d: false,
     space: false,
-    shift: false
+    shift: false,
+    crouch: false
 };
 
 export function setupControls(camera, options = {}) {
@@ -46,6 +47,8 @@ export function setupControls(camera, options = {}) {
             ? 'space'
             : e.code === 'ShiftLeft' || e.code === 'ShiftRight'
                 ? 'shift'
+                : e.code === 'ControlLeft' || e.code === 'ControlRight' || e.code === 'KeyC'
+                    ? 'crouch'
                 : e.key.toLowerCase();
         if (k in keys) keys[k] = true;
     });
@@ -55,6 +58,8 @@ export function setupControls(camera, options = {}) {
             ? 'space'
             : e.code === 'ShiftLeft' || e.code === 'ShiftRight'
                 ? 'shift'
+                : e.code === 'ControlLeft' || e.code === 'ControlRight' || e.code === 'KeyC'
+                    ? 'crouch'
                 : e.key.toLowerCase();
         if (k in keys) keys[k] = false;
     });

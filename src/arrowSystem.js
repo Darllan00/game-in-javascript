@@ -142,14 +142,60 @@ export function createArrowSystem(scene, getHeight, diagnostics = null, options 
         featherMaterial: new THREE.MeshStandardMaterial({ color: 0xd8d1c3, roughness: 0.9 })
     };
     const arrows = [];
+    const meshPool = [];
+    const arrowRecordPool = [];
     const gravity = ARROW_CONFIG.gravidade ?? 18;
     const lifeTime = ARROW_CONFIG.tempoVida ?? 8;
     const stuckLifeTime = ARROW_CONFIG.tempoCravadaNoTerreno ?? 24;
     const maxArrows = ARROW_CONFIG.maxFlechasAtivas ?? 64;
     const arrowRadius = ARROW_CONFIG.raioColisao ?? 0.18;
 
+    function acquireArrowMesh() {
+        const mesh = meshPool.pop() ?? createArrowMesh(resources);
+        mesh.visible = true;
+        return mesh;
+    }
+
+    function releaseArrowMesh(mesh) {
+        if (!mesh) return;
+        mesh.visible = false;
+        mesh.parent?.remove(mesh);
+        if (meshPool.length < maxArrows) {
+            meshPool.push(mesh);
+        }
+    }
+
+    function acquireArrowRecord() {
+        return arrowRecordPool.pop() ?? {
+            mesh: null,
+            ownerId: null,
+            velocity: new THREE.Vector3(),
+            damage: 0,
+            previousPosition: new THREE.Vector3(),
+            stuck: false,
+            stuckAge: 0,
+            age: 0
+        };
+    }
+
+    function releaseArrowRecord(arrow) {
+        arrow.mesh = null;
+        arrow.ownerId = null;
+        arrow.velocity.set(0, 0, 0);
+        arrow.damage = 0;
+        arrow.previousPosition.set(0, 0, 0);
+        arrow.stuck = false;
+        arrow.stuckAge = 0;
+        arrow.age = 0;
+        if (arrowRecordPool.length < maxArrows) {
+            arrowRecordPool.push(arrow);
+        }
+    }
+
     function removeArrow(arrow) {
-        scene.remove(arrow.mesh);
+        if (!arrow) return;
+        releaseArrowMesh(arrow.mesh);
+        releaseArrowRecord(arrow);
     }
 
     function shoot({ ownerId, origin, direction, level }) {
@@ -161,23 +207,23 @@ export function createArrowSystem(scene, getHeight, diagnostics = null, options 
 
         const speed = getLevelValue(ARROW_CONFIG.velocidades, level, 60);
         const damage = getLevelValue(ARROW_CONFIG.danos, level, 50);
-        const mesh = createArrowMesh(resources);
-        const velocity = direction.clone().normalize().multiplyScalar(speed);
+        const mesh = acquireArrowMesh();
 
         mesh.position.copy(origin);
-        orientArrow(mesh, velocity);
         scene.add(mesh);
 
-        const arrow = {
-            mesh,
-            ownerId,
-            velocity,
-            damage,
-            previousPosition: mesh.position.clone(),
-            stuck: false,
-            stuckAge: 0,
-            age: 0
-        };
+        const arrow = acquireArrowRecord();
+        arrow.mesh = mesh;
+        arrow.ownerId = ownerId;
+        arrow.velocity.copy(direction).normalize().multiplyScalar(speed);
+        arrow.damage = damage;
+        arrow.previousPosition.copy(mesh.position);
+        arrow.stuck = false;
+        arrow.stuckAge = 0;
+        arrow.age = 0;
+
+        orientArrow(mesh, arrow.velocity);
+
         arrows.push(arrow);
         diagnostics?.setCounter?.('arrows', arrows.length);
         return arrow;
@@ -259,6 +305,8 @@ export function createArrowSystem(scene, getHeight, diagnostics = null, options 
             removeArrow(arrow);
         }
         arrows.length = 0;
+        meshPool.length = 0;
+        arrowRecordPool.length = 0;
 
         resources.shaftGeometry.dispose();
         resources.tipGeometry.dispose();

@@ -18,6 +18,8 @@ const PLAYER_TWO_BOW_LAYER = 4;
 const PLAYER_HITBOX_RADIUS = 0.55;
 const PLAYER_HITBOX_HEIGHT = 2.0;
 const BOW_CONFIG = CONFIG.mecanicas?.arco ?? {};
+const CROUCH_CONFIG = CONFIG.mecanicas?.agachar ?? {};
+const CROUCH_HITBOX_MULTIPLIER = CROUCH_CONFIG.multiplicadorAlturaHitbox ?? 0.62;
 
 const forwardVector = new THREE.Vector3();
 const rightVector = new THREE.Vector3();
@@ -37,6 +39,9 @@ function createKeyState() {
         KeyF: false,
         ShiftLeft: false,
         ShiftRight: false,
+        ControlLeft: false,
+        ControlRight: false,
+        KeyC: false,
         Enter: false
     };
 }
@@ -73,6 +78,10 @@ function isGamepadDashing(gamepad) {
         || buttons[6]?.pressed
         || (buttons[6]?.value ?? 0) > 0.22
     );
+}
+
+function isGamepadCrouching(gamepad) {
+    return Boolean(gamepad?.buttons?.[2]?.pressed);
 }
 
 function getConnectedGamepads() {
@@ -133,7 +142,8 @@ function createCoopPlayer({ id, color, label, camera, startX, startZ, yaw, getHe
         },
         hitbox: {
             radius: PLAYER_HITBOX_RADIUS,
-            height: PLAYER_HITBOX_HEIGHT
+            height: PLAYER_HITBOX_HEIGHT,
+            standingHeight: PLAYER_HITBOX_HEIGHT
         },
         input: {
             x: 0,
@@ -141,18 +151,21 @@ function createCoopPlayer({ id, color, label, camera, startX, startZ, yaw, getHe
             lookX: 0,
             lookY: 0,
             jump: false,
-            dash: false
+            dash: false,
+            crouch: false
         }
     };
 }
 
-function updateCoopPlayerPhysics(delta, player, getHeight, resolveTreeCollision) {
+function updateCoopPlayerPhysics(delta, player, getHeight, getSample, resolveTreeCollision) {
     return updatePlayerPhysics({
         delta,
         position: player.group.position,
         state: player.state,
         getHeight,
+        getSample,
         jump: player.input.jump,
+        crouching: player.input.crouch,
         movementSpeedMultiplier: player.movementSpeedMultiplier ?? 1,
         resolveHorizontalCollision(position) {
             resolveTreeCollision?.(position, player.hitbox.radius);
@@ -171,6 +184,18 @@ function updateCoopPlayerPhysics(delta, player, getHeight, resolveTreeCollision)
             player.group.position.z += movementVector.z * distance;
         }
     });
+}
+
+function getPlayerEyeHeight(player) {
+    return player.input.crouch
+        ? (CONFIG.mecanicas?.agachar?.alturaOlhos ?? CONFIG.terreno.alturaOlhos)
+        : CONFIG.terreno.alturaOlhos;
+}
+
+function updatePlayerBodyPose(player) {
+    const scaleY = player.input.crouch ? CROUCH_HITBOX_MULTIPLIER : 1;
+    player.body.scale.y = scaleY;
+    player.body.position.y = -getPlayerEyeHeight(player) / 2;
 }
 
 function resolvePlayerHitboxes(players, getHeight) {
@@ -203,8 +228,8 @@ function resolvePlayerHitboxes(players, getHeight) {
             bPosition.x += hitboxDelta.x * push;
             bPosition.z += hitboxDelta.y * push;
 
-            aPosition.y = Math.max(aPosition.y, getHeight(aPosition.x, aPosition.z) + CONFIG.terreno.alturaOlhos);
-            bPosition.y = Math.max(bPosition.y, getHeight(bPosition.x, bPosition.z) + CONFIG.terreno.alturaOlhos);
+            aPosition.y = Math.max(aPosition.y, getHeight(aPosition.x, aPosition.z) + getPlayerEyeHeight(a));
+            bPosition.y = Math.max(bPosition.y, getHeight(bPosition.x, bPosition.z) + getPlayerEyeHeight(b));
         }
     }
 }
@@ -224,6 +249,7 @@ function updateKeyboardMouseInput(player, keyboard) {
     player.input.z = (keyboard.KeyS ? 1 : 0) - (keyboard.KeyW ? 1 : 0);
     player.input.jump = keyboard.Space;
     player.input.dash = keyboard.ShiftLeft || keyboard.ShiftRight;
+    player.input.crouch = keyboard.ControlLeft || keyboard.ControlRight || keyboard.KeyC;
 }
 
 function updateGamepadInput(player, gamepad) {
@@ -234,6 +260,7 @@ function updateGamepadInput(player, gamepad) {
         player.input.lookY = 0;
         player.input.jump = false;
         player.input.dash = false;
+        player.input.crouch = false;
         return;
     }
 
@@ -243,6 +270,7 @@ function updateGamepadInput(player, gamepad) {
     player.input.lookY = readAxis(gamepad.axes?.[3] ?? 0);
     player.input.jump = isGamepadJumping(gamepad);
     player.input.dash = isGamepadDashing(gamepad);
+    player.input.crouch = isGamepadCrouching(gamepad);
 }
 
 export function createLocalCoopMode({
@@ -407,6 +435,8 @@ export function createLocalCoopMode({
             id: player.id,
             label: player.label,
             position: player.group.position,
+            yaw: player.yaw,
+            isCrouching: player.input.crouch,
             vitals: player.vitals,
             bow: bowHudState,
             dash: dashHudState,
@@ -427,11 +457,13 @@ export function createLocalCoopMode({
             const keyboardMoveZ = playerOne.input.z;
             const keyboardJump = playerOne.input.jump;
             const keyboardDash = playerOne.input.dash;
+            const keyboardCrouch = playerOne.input.crouch;
             updateGamepadInput(playerOne, gamepads.playerOne);
             playerOne.input.x = playerOne.input.x || keyboardMoveX;
             playerOne.input.z = playerOne.input.z || keyboardMoveZ;
             playerOne.input.jump = playerOne.input.jump || keyboardJump;
             playerOne.input.dash = playerOne.input.dash || keyboardDash;
+            playerOne.input.crouch = playerOne.input.crouch || keyboardCrouch;
         }
 
         updateGamepadInput(playerTwo, gamepads.playerTwo);
@@ -448,10 +480,18 @@ export function createLocalCoopMode({
                 let landing = null;
                 const isMovingPlayer = player.input.x !== 0 || player.input.z !== 0;
                 const canAct = !player.vitals.isDead;
-                updateDashInput(player.dash, canAct && player.input.dash && isMovingPlayer, canAct && isMovingPlayer);
+                player.hitbox.height = player.input.crouch
+                    ? player.hitbox.standingHeight * CROUCH_HITBOX_MULTIPLIER
+                    : player.hitbox.standingHeight;
+                updatePlayerBodyPose(player);
+                updateDashInput(
+                    player.dash,
+                    canAct && !player.input.crouch && player.input.dash && isMovingPlayer,
+                    canAct && isMovingPlayer
+                );
                 player.movementSpeedMultiplier = updateDashState(player.dash, delta);
                 if (!player.vitals.isDead) {
-                    landing = updateCoopPlayerPhysics(delta, player, getHeight, resolveTreeCollision)?.landing ?? null;
+                    landing = updateCoopPlayerPhysics(delta, player, getHeight, getSample, resolveTreeCollision)?.landing ?? null;
                 }
                 player.vitals.update(delta, player.group.position, getSample, landing);
             }
@@ -481,6 +521,7 @@ export function createLocalCoopMode({
         return {
             isActive: isStarted,
             isMoving,
+            handlesShadowFocus: true,
             primary: playerOne.group.position,
             focuses: players.map((player) => player.group.position),
             players: playerInfos,
@@ -498,7 +539,7 @@ export function createLocalCoopMode({
         trees?.restoreVisibility?.();
     }
 
-    function render(grass, trees) {
+    function render(grass, trees, dayNightCycle = null, water = null) {
         const width = window.innerWidth;
         const height = window.innerHeight;
         const leftWidth = Math.floor(width / 2);
@@ -506,17 +547,22 @@ export function createLocalCoopMode({
 
         renderer.setScissorTest(true);
 
+        water?.setVisibilityForFocus?.(playerOne.group.position);
         setVegetationVisibilityForFocus(playerOne.group.position, grass, trees);
+        dayNightCycle?.prepareRenderForFocus?.(playerOne.group.position);
         renderer.setViewport(0, 0, leftWidth, height);
         renderer.setScissor(0, 0, leftWidth, height);
         renderer.render(scene, playerOne.camera);
 
+        water?.setVisibilityForFocus?.(playerTwo.group.position);
         setVegetationVisibilityForFocus(playerTwo.group.position, grass, trees);
+        dayNightCycle?.prepareRenderForFocus?.(playerTwo.group.position);
         renderer.setViewport(leftWidth, 0, rightWidth, height);
         renderer.setScissor(leftWidth, 0, rightWidth, height);
         renderer.render(scene, playerTwo.camera);
 
         restoreVegetationVisibility(grass, trees);
+        water?.restoreVisibility?.();
         renderer.setScissorTest(false);
     }
 

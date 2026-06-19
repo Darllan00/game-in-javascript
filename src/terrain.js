@@ -1497,6 +1497,67 @@ export function createTerrain(scene, diagnostics, options = {}) {
         maybeUpdateSuperChunkMaskFocuses(focuses, focusSignature);
     }
 
+    function preloadChunksForPlayers(deadlineMs, playerPositions, maxDistanceOverride = null) {
+        const focuses = createChunkFocuses(playerPositions);
+        if (!focuses.length) return false;
+
+        const previousTransitionBuffer = chunkTransitionBufferChunks;
+        chunkTransitionBufferChunks = 0;
+
+        const focusSignature = getFocusSignature(focuses);
+        if (focusSignature !== lastFocusSignature || !lastChunkFocuses.length) {
+            lastFocusSignature = focusSignature;
+            lastChunkFocuses = focuses;
+            lastPlayerChunkX = focuses[0].chunkX;
+            lastPlayerChunkZ = focuses[0].chunkZ;
+            refreshChunkQueue();
+            markSuperChunkMaskDirty();
+        }
+
+        const maxDistance = Math.min(
+            maxDistanceOverride ?? getIndividualChunkDistanceLimit(),
+            getIndividualChunkDistanceLimit()
+        );
+
+        for (const focus of focuses) {
+            for (let dz = -maxDistance; dz <= maxDistance; dz++) {
+                for (let dx = -maxDistance; dx <= maxDistance; dx++) {
+                    const cx = focus.chunkX + dx;
+                    const cz = focus.chunkZ + dz;
+                    if (hasChunkArea(cx, cz)) {
+                        enqueueChunk(cx, cz);
+                    }
+                }
+            }
+        }
+
+        while (performance.now() < deadlineMs) {
+            const remainingMs = Math.max(0.1, deadlineMs - performance.now());
+            const finishedItems = processChunkQueue(remainingMs, QUEUE_BUILD_BUDGET_MS, {
+                allowStartingNewJob: true
+            });
+            if (!activeChunkJob && finishedItems === 0) break;
+        }
+
+        updateMacroChunkMaskFocuses(focuses);
+        maybeUpdateSuperChunkMaskFocuses(focuses, focusSignature);
+        chunkTransitionBufferChunks = previousTransitionBuffer;
+
+        for (const focus of focuses) {
+            for (let dz = -maxDistance; dz <= maxDistance; dz++) {
+                for (let dx = -maxDistance; dx <= maxDistance; dx++) {
+                    const cx = focus.chunkX + dx;
+                    const cz = focus.chunkZ + dz;
+                    if (!hasChunkArea(cx, cz)) continue;
+                    if (!chunks.get(getChunkKey(cx, cz))?.activeVariant) {
+                        return false;
+                    }
+                }
+            }
+        }
+        return true;
+    }
+
     function updateChunks(playerX, playerZ, isPlayerMoving = false) {
         updateChunksForPlayers([{ x: playerX, z: playerZ }], isPlayerMoving);
     }
@@ -1578,6 +1639,7 @@ export function createTerrain(scene, diagnostics, options = {}) {
         isMacroWorldReady,
         preloadMacroWorldStep,
         setChunkLifecycle,
+        preloadChunksForPlayers,
         updateChunks,
         updateChunksForPlayers,
         dispose

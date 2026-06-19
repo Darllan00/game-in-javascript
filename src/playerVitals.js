@@ -25,6 +25,8 @@ export function createPlayerVitals({ id, label } = {}) {
         underwaterTime: 0,
         lastDamageType: null,
         isUnderwater: false,
+        waterSurfaceY: null,
+        underwaterDepth: 0,
 
         get isDead() {
             return this.health <= 0;
@@ -43,6 +45,8 @@ export function createPlayerVitals({ id, label } = {}) {
             this.underwaterTime = 0;
             this.lastDamageType = null;
             this.isUnderwater = false;
+            this.waterSurfaceY = null;
+            this.underwaterDepth = 0;
         },
 
         update(delta, position, getSample, landing = null) {
@@ -73,10 +77,15 @@ function applyFallDamage(vitals, landing) {
 function updateDrowning(vitals, delta, position, getSample) {
     const sample = getSample?.(position.x, position.z);
     const waterSurfaceY = sample?.water?.surfaceY;
+    const depthBelowSurface = Number.isFinite(waterSurfaceY)
+        ? waterSurfaceY - position.y
+        : 0;
     const isUnderwater = Number.isFinite(waterSurfaceY)
-        && position.y < waterSurfaceY - DROWNING_HEAD_MARGIN;
+        && depthBelowSurface > DROWNING_HEAD_MARGIN;
 
     vitals.isUnderwater = isUnderwater;
+    vitals.waterSurfaceY = Number.isFinite(waterSurfaceY) ? waterSurfaceY : null;
+    vitals.underwaterDepth = Math.max(0, depthBelowSurface);
 
     if (!isUnderwater) {
         vitals.underwaterTime = 0;

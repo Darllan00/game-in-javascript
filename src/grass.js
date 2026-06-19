@@ -817,13 +817,13 @@ export function createGrass(scene, getHeight, getTerrainSample, diagnostics, opt
         }
     }
 
-    function processTileQueue(focuses, maxBuildsOverride = null) {
+    function processTileQueue(focuses, maxBuildsOverride = null, deadlineOverride = null) {
         const useMovingBudget = maxBuildsOverride !== null;
         let totalBuilt = 0;
         const midConfig = grassConfig.intermediaria;
         const farConfig = grassConfig.distante;
         const maxFinishedTiles = maxBuildsOverride ?? Infinity;
-        const deadline = performance.now() + (grassConfig.tempoGeracaoTilesMs ?? 1.5);
+        const deadline = deadlineOverride ?? performance.now() + (grassConfig.tempoGeracaoTilesMs ?? 1.5);
         const budgets = {
             near: grassConfig.tilesPorFrame,
             mid: midConfig.tilesPorFrame,
@@ -924,6 +924,40 @@ export function createGrass(scene, getHeight, getTerrainSample, diagnostics, opt
         diagnostics?.setCounter('grassTiles', activeTiles.size);
         diagnostics?.setCounter('grassQueue', tileBuildQueue.length);
         diagnostics?.setCounter('grassActiveJob', activeGrassJob ? 1 : 0);
+    }
+
+    function preloadForPlayers(deadline, playerPositions, maxDistanceOverride = null) {
+        const focuses = createGrassFocuses(playerPositions);
+        if (!focuses.length) return true;
+
+        updateLightLevel();
+
+        const fullDistance = getFullRefreshDistance();
+        const preloadDistance = maxDistanceOverride === null
+            ? fullDistance
+            : Math.min(Math.max(0, maxDistanceOverride), fullDistance);
+        const focusSignature = getFocusSignature(focuses);
+        lastFocusSignature = focusSignature;
+        lastRefreshSignature = focusSignature;
+        currentRefreshDistance = Math.max(currentRefreshDistance, preloadDistance);
+
+        refreshTilesForFocuses(focuses, preloadDistance);
+        prioritizeTileQueueForFocuses(focuses, preloadDistance);
+
+        while (performance.now() < deadline) {
+            const queueLengthBefore = tileBuildQueue.length;
+            const activeJobBefore = activeGrassJob;
+            processTileQueue(focuses, null, deadline);
+
+            if (!activeGrassJob && tileBuildQueue.length === 0) break;
+            if (
+                activeGrassJob === activeJobBefore
+                && tileBuildQueue.length === queueLengthBefore
+                && performance.now() >= deadline
+            ) break;
+        }
+
+        return !activeGrassJob && tileBuildQueue.length === 0;
     }
 
     function updateLightLevel() {
@@ -1098,5 +1132,5 @@ export function createGrass(scene, getHeight, getTerrainSample, diagnostics, opt
         farMaterial.dispose();
     }
 
-    return { update, updateForPlayers, setVisibilityForFocus, restoreVisibility, disposeChunk, dispose };
+    return { update, updateForPlayers, preloadForPlayers, setVisibilityForFocus, restoreVisibility, disposeChunk, dispose };
 }

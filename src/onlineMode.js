@@ -11,8 +11,10 @@ import { createOnlineHud } from './onlineHud.js';
 
 const PLAYER_CONFIG = CONFIG.mecanicas?.jogador ?? {};
 const BOW_CONFIG = CONFIG.mecanicas?.arco ?? {};
+const CROUCH_CONFIG = CONFIG.mecanicas?.agachar ?? {};
 const HITBOX_RADIUS = PLAYER_CONFIG.raioColisao ?? 0.55;
 const HITBOX_HEIGHT = PLAYER_CONFIG.alturaColisao ?? 2.0;
+const CROUCH_HITBOX_MULTIPLIER = CROUCH_CONFIG.multiplicadorAlturaHitbox ?? 0.62;
 const EYE_HEIGHT = CONFIG.terreno.alturaOlhos ?? 2;
 const SEND_INTERVAL = 0.05;
 const PLACEMENT_BONUS = [5, 2, 1];
@@ -29,6 +31,20 @@ function colorHex(color) {
     return `#${new THREE.Color(color).getHexString()}`;
 }
 
+function parseColorHex(color, fallback = 0xffffff) {
+    if (typeof color === 'number' && Number.isFinite(color)) return color;
+    if (typeof color !== 'string') return fallback;
+
+    const clean = color.startsWith('#') ? color.slice(1) : color;
+    if (!/^[0-9a-fA-F]{6}$/.test(clean)) return fallback;
+
+    return Number.parseInt(clean, 16);
+}
+
+function isFiniteNumber(value) {
+    return Number.isFinite(Number(value));
+}
+
 function createRemoteBlock(color) {
     const group = new THREE.Object3D();
     const geometry = new THREE.BoxGeometry(1.1, 2, 1.1);
@@ -41,6 +57,14 @@ function createRemoteBlock(color) {
     const carriedBow = createCarriedBow();
     group.add(carriedBow.object);
     return { group, body, geometry, material, carriedBow };
+}
+
+function updateRemoteBodyPose(entry) {
+    const isCrouching = Boolean(entry.target.isCrouching);
+    entry.body.scale.y = isCrouching ? CROUCH_HITBOX_MULTIPLIER : 1;
+    entry.body.position.y = isCrouching
+        ? -(CROUCH_CONFIG.alturaOlhos ?? EYE_HEIGHT) / 2
+        : -EYE_HEIGHT / 2;
 }
 
 export function createOnlineMode({
@@ -65,9 +89,9 @@ export function createOnlineMode({
     const dash = createDashState();
     const bowView = createBowView(scene, camera);
     const localState = { velocidadeY: 0, noChao: false, fallPeakY: null };
-    const localHitbox = { radius: HITBOX_RADIUS, height: HITBOX_HEIGHT };
+    const localHitbox = { radius: HITBOX_RADIUS, height: HITBOX_HEIGHT, standingHeight: HITBOX_HEIGHT };
 
-    const keys = { w: false, a: false, s: false, d: false, space: false, shift: false };
+    const keys = { w: false, a: false, s: false, d: false, space: false, shift: false, crouch: false };
     const remotes = new Map();
     const remoteShotQueue = [];
 
@@ -197,8 +221,10 @@ export function createOnlineMode({
                 break;
             }
             case 'shot': {
-                queueRemoteShot(data);
-                host.broadcast(data, conn.peer);
+                const shot = sanitizeShotMessage(data, conn.peer);
+                if (!shot) break;
+                queueRemoteShot(shot);
+                host.broadcast(shot, conn.peer);
                 break;
             }
             case 'death': {
@@ -256,6 +282,35 @@ export function createOnlineMode({
         }));
     }
 
+    function sanitizeShotMessage(data, ownerId) {
+        if (!ownerId) return null;
+        if (
+            !isFiniteNumber(data.ox)
+            || !isFiniteNumber(data.oy)
+            || !isFiniteNumber(data.oz)
+            || !isFiniteNumber(data.dx)
+            || !isFiniteNumber(data.dy)
+            || !isFiniteNumber(data.dz)
+        ) return null;
+
+        shotDirection.set(Number(data.dx), Number(data.dy), Number(data.dz));
+        if (shotDirection.lengthSq() < 0.0001) return null;
+
+        const maxLevel = Math.max(1, BOW_CONFIG.niveis ?? 4);
+        const level = THREE.MathUtils.clamp(Math.round(Number(data.level) || 1), 1, maxLevel);
+        return {
+            t: 'shot',
+            ownerId,
+            ox: Number(data.ox),
+            oy: Number(data.oy),
+            oz: Number(data.oz),
+            dx: shotDirection.x,
+            dy: shotDirection.y,
+            dz: shotDirection.z,
+            level
+        };
+    }
+
     function startMatch() {
         if (!isHost) return;
         if (roster.size < 2) {
@@ -308,7 +363,8 @@ export function createOnlineMode({
                 pitch: s.pitch ?? 0,
                 isDead: Boolean(s.isDead),
                 moving: Boolean(s.moving),
-                bow: s.bow ?? null
+                bow: s.bow ?? null,
+                crouching: Boolean(s.crouching)
             };
         });
         const snap = { t: 'snapshot', players, match: { active: match.active, alive: match.alive.size } };
@@ -365,7 +421,7 @@ export function createOnlineMode({
             target: {
                 id,
                 position: block.group.position,
-                hitbox: { radius: HITBOX_RADIUS, height: HITBOX_HEIGHT },
+                hitbox: { radius: HITBOX_RADIUS, height: HITBOX_HEIGHT, standingHeight: HITBOX_HEIGHT },
                 vitals: { isDead: false }
             }
         };
@@ -388,13 +444,24 @@ export function createOnlineMode({
         for (const p of snap.players) {
             if (p.id === localId) continue;
             seen.add(p.id);
-            const entry = ensureRemote(p.id, new THREE.Color(p.color).getHex());
+            const entry = ensureRemote(p.id, parseColorHex(p.color));
             entry.desired.set(p.x, p.y, p.z);
             if (!entry.hasDesired) {
                 entry.group.position.copy(entry.desired);
                 entry.hasDesired = true;
             }
+            entry.label = p.name || 'Jogador';
+            entry.color = p.color;
             entry.group.rotation.y = p.yaw ?? 0;
+            if (entry.carriedBow?.object) {
+                const pitch = THREE.MathUtils.clamp(p.pitch ?? 0, -Math.PI / 2, Math.PI / 2);
+                entry.carriedBow.object.rotation.x = 0.12 + pitch * 0.65;
+            }
+            entry.target.isCrouching = Boolean(p.crouching);
+            entry.target.hitbox.height = entry.target.isCrouching
+                ? entry.target.hitbox.standingHeight * CROUCH_HITBOX_MULTIPLIER
+                : entry.target.hitbox.standingHeight;
+            updateRemoteBodyPose(entry);
             entry.target.vitals.isDead = Boolean(p.isDead);
             entry.group.visible = !p.isDead;
             entry.carriedBow?.update(p.bow, !p.isDead);
@@ -570,6 +637,7 @@ export function createOnlineMode({
     function mapKey(event) {
         if (event.code === 'Space') return 'space';
         if (event.code === 'ShiftLeft' || event.code === 'ShiftRight') return 'shift';
+        if (event.code === 'ControlLeft' || event.code === 'ControlRight' || event.code === 'KeyC') return 'crouch';
         const lower = event.key.toLowerCase();
         if (lower === 'w' || lower === 'a' || lower === 's' || lower === 'd') return lower;
         return null;
@@ -598,6 +666,7 @@ export function createOnlineMode({
     // ---------------------------------------------------------------
     function netTick(delta, isMoving, bowHud) {
         cameraEuler.setFromQuaternion(camera.quaternion);
+        const isCrouching = controls.isLocked && !localVitals.isDead && keys.crouch;
         const myState = {
             x: player.position.x,
             y: player.position.y,
@@ -606,7 +675,8 @@ export function createOnlineMode({
             pitch: cameraEuler.x,
             isDead: localVitals.isDead,
             moving: isMoving,
-            bow: bowHud ?? getBowHudState(bow)
+            bow: bowHud ?? getBowHudState(bow),
+            crouching: isCrouching
         };
 
         netAccum += delta;
@@ -633,9 +703,13 @@ export function createOnlineMode({
         const locked = controls.isLocked;
         const canAct = locked && !localVitals.isDead;
         const isMoving = canAct && (keys.w || keys.a || keys.s || keys.d);
+        const isCrouching = canAct && keys.crouch;
 
-        updateDashInput(dash, canAct && keys.shift && isMoving, canAct && isMoving);
+        updateDashInput(dash, canAct && !isCrouching && keys.shift && isMoving, canAct && isMoving);
         const speedMultiplier = updateDashState(dash, delta);
+        localHitbox.height = isCrouching
+            ? localHitbox.standingHeight * CROUCH_HITBOX_MULTIPLIER
+            : localHitbox.standingHeight;
 
         let landing = null;
         if (canAct) {
@@ -644,7 +718,9 @@ export function createOnlineMode({
                 position: player.position,
                 state: localState,
                 getHeight,
+                getSample,
                 jump: keys.space,
+                crouching: isCrouching,
                 movementSpeedMultiplier: speedMultiplier,
                 resolveHorizontalCollision(position) {
                     resolveTreeCollision?.(position, HITBOX_RADIUS);
@@ -690,6 +766,8 @@ export function createOnlineMode({
             id: 'local',
             label: myName,
             position: player.position,
+            yaw: cameraEuler.y,
+            isCrouching,
             vitals: localVitals,
             bow: bowHud,
             dash: dashHud,
@@ -698,8 +776,18 @@ export function createOnlineMode({
         const arrowTargets = [
             { id: localId, position: player.position, hitbox: localHitbox, vitals: localVitals }
         ];
+        const minimapPlayers = [localPlayerInfo];
         for (const entry of remotes.values()) {
             arrowTargets.push(entry.target);
+            minimapPlayers.push({
+                id: entry.target.id,
+                label: entry.label ?? 'Jogador',
+                position: entry.target.position,
+                yaw: entry.group.rotation.y,
+                isCrouching: entry.target.isCrouching,
+                vitals: entry.target.vitals,
+                color: entry.color
+            });
         }
 
         return {
@@ -708,6 +796,7 @@ export function createOnlineMode({
             primary: player.position,
             focuses: [player.position],
             players: [localPlayerInfo],
+            minimapPlayers,
             arrowTargets,
             shots,
             onHit

@@ -10,6 +10,7 @@ const tempColorB = new THREE.Color();
 const sunDirection = new THREE.Vector3();
 const moonDirection = new THREE.Vector3();
 const cameraWorldPosition = new THREE.Vector3();
+const focusCenterPosition = new THREE.Vector3();
 const shadowFocusPosition = new THREE.Vector3();
 const sunDayColor = new THREE.Color(0xfff2d2);
 const sunHorizonColor = new THREE.Color(0xffa25f);
@@ -18,6 +19,7 @@ const skyHorizonColor = new THREE.Color(0xffc38a);
 const skyNightGroundColor = new THREE.Color(0x1c2230);
 const skyDayGroundColor = new THREE.Color(0x5a5138);
 const moonColor = new THREE.Color(0xb7c9ff);
+const sharedFocusScratch = new THREE.Vector3();
 
 const SKY_STOPS = [
     { t: 0.00, color: new THREE.Color(0x07101f) },
@@ -111,6 +113,31 @@ function createStarField(count, radius) {
     return new THREE.Points(geometry, material);
 }
 
+function getFocusCenter(focusPositions, fallback, target) {
+    target.set(0, 0, 0);
+    let count = 0;
+
+    for (const position of focusPositions ?? []) {
+        if (!position || !Number.isFinite(position.x) || !Number.isFinite(position.z)) continue;
+        target.x += position.x;
+        target.y += Number.isFinite(position.y) ? position.y : fallback.y;
+        target.z += position.z;
+        count++;
+    }
+
+    if (!count) return target.copy(fallback);
+    return target.multiplyScalar(1 / count);
+}
+
+function getFocusRadius(focusPositions, center) {
+    let radius = 0;
+    for (const position of focusPositions ?? []) {
+        if (!position || !Number.isFinite(position.x) || !Number.isFinite(position.z)) continue;
+        radius = Math.max(radius, Math.hypot(position.x - center.x, position.z - center.z));
+    }
+    return radius;
+}
+
 export function createDayNightCycle(scene, camera, renderer = null) {
     const cycleConfig = CONFIG.cicloDiaNoite;
     const shadowConfig = CONFIG.iluminacao?.sombras ?? {};
@@ -118,10 +145,13 @@ export function createDayNightCycle(scene, camera, renderer = null) {
     const manualShadowUpdates = shadowsEnabled && shadowConfig.atualizacaoManual === true && renderer?.shadowMap;
     const shadowUpdateInterval = (shadowConfig.atualizacaoMs ?? 140) / 1000;
     const shadowFocusGrid = Math.max(1, shadowConfig.focoGrade ?? 8);
+    const baseShadowDistance = shadowConfig.distancia ?? 110;
+    const maxShadowDistance = Math.max(baseShadowDistance, shadowConfig.distanciaMaxima ?? baseShadowDistance * 4);
+    const shadowFocusPadding = Math.max(0, shadowConfig.margemFoco ?? 0);
     const shadowLightDistance = shadowConfig.distanciaLuz ?? 320;
     const shadowCameraFar = Math.max(
-        shadowConfig.profundidade ?? shadowLightDistance + (shadowConfig.distancia ?? 110) * 2.5,
-        shadowLightDistance + 20
+        shadowConfig.profundidade ?? shadowLightDistance + maxShadowDistance * 2.5,
+        shadowLightDistance + maxShadowDistance + 20
     );
     const cycleDurationSeconds = cycleConfig.duracaoMinutos * 60;
     const updateInterval = 1 / cycleConfig.atualizacoesPorSegundo;
@@ -132,6 +162,9 @@ export function createDayNightCycle(scene, camera, renderer = null) {
     let shadowFocusChanged = true;
     let lastShadowFocusX = Infinity;
     let lastShadowFocusZ = Infinity;
+    let currentShadowDistance = 0;
+    let currentShadowSignature = '';
+    let renderedShadowSignature = '';
     const lightingState = {
         version: 0,
         timeOfDay: 0,
@@ -153,19 +186,29 @@ export function createDayNightCycle(scene, camera, renderer = null) {
 
     const sunLight = new THREE.DirectionalLight(0xfff0cf, 1.25);
     sunLight.castShadow = shadowsEnabled;
+
+    function setShadowCameraDistance(distance) {
+        if (!shadowsEnabled) return;
+        const nextDistance = THREE.MathUtils.clamp(distance, baseShadowDistance, maxShadowDistance);
+        if (Math.abs(nextDistance - currentShadowDistance) < 2) return;
+
+        currentShadowDistance = nextDistance;
+        sunLight.shadow.camera.left = -nextDistance;
+        sunLight.shadow.camera.right = nextDistance;
+        sunLight.shadow.camera.top = nextDistance;
+        sunLight.shadow.camera.bottom = -nextDistance;
+        sunLight.shadow.camera.updateProjectionMatrix();
+        shadowFocusChanged = true;
+    }
+
     if (shadowsEnabled) {
-        const shadowDistance = shadowConfig.distancia ?? 110;
         const shadowMapSize = shadowConfig.tamanhoMapa ?? 1536;
         sunLight.shadow.mapSize.set(shadowMapSize, shadowMapSize);
-        sunLight.shadow.camera.left = -shadowDistance;
-        sunLight.shadow.camera.right = shadowDistance;
-        sunLight.shadow.camera.top = shadowDistance;
-        sunLight.shadow.camera.bottom = -shadowDistance;
         sunLight.shadow.camera.near = 1;
         sunLight.shadow.camera.far = shadowCameraFar;
         sunLight.shadow.bias = shadowConfig.bias ?? -0.00018;
         sunLight.shadow.normalBias = shadowConfig.normalBias ?? 0.045;
-        sunLight.shadow.camera.updateProjectionMatrix();
+        setShadowCameraDistance(baseShadowDistance);
     }
 
     const moonLight = new THREE.DirectionalLight(0x9db7ff, 0.08);
@@ -207,7 +250,47 @@ export function createDayNightCycle(scene, camera, renderer = null) {
         }
     }
 
-    function updateCelestialPositions(timeOfDay) {
+    function setShadowFocusPosition(focusPosition, shadowDistance = baseShadowDistance) {
+        if (!shadowsEnabled || !focusPosition) return false;
+
+        setShadowCameraDistance(shadowDistance);
+        const focusX = Math.round(focusPosition.x / shadowFocusGrid) * shadowFocusGrid;
+        const focusZ = Math.round(focusPosition.z / shadowFocusGrid) * shadowFocusGrid;
+        const focusY = Number.isFinite(focusPosition.y) ? focusPosition.y : cameraWorldPosition.y;
+        const distance = Math.round(currentShadowDistance);
+
+        shadowFocusPosition.set(focusX, focusY, focusZ);
+        sunLight.position.copy(shadowFocusPosition).addScaledVector(sunDirection, shadowLightDistance);
+        sunLight.target.position.copy(shadowFocusPosition);
+        lastShadowFocusX = focusX;
+        lastShadowFocusZ = focusZ;
+        currentShadowSignature = `${focusX},${focusZ},${distance}`;
+        return true;
+    }
+
+    function prepareRenderForFocus(focusPosition) {
+        if (!setShadowFocusPosition(focusPosition, baseShadowDistance)) return;
+        if (currentShadowSignature === renderedShadowSignature) return;
+        requestShadowUpdate();
+        renderedShadowSignature = currentShadowSignature;
+    }
+
+    function prepareSharedRenderForFocuses(focusPositions) {
+        if (!focusPositions?.length) return false;
+
+        camera.getWorldPosition(cameraWorldPosition);
+        getFocusCenter(focusPositions, cameraWorldPosition, sharedFocusScratch);
+        const focusRadius = getFocusRadius(focusPositions, sharedFocusScratch);
+        const shadowDistance = baseShadowDistance + focusRadius + shadowFocusPadding;
+        if (!setShadowFocusPosition(sharedFocusScratch, shadowDistance)) return false;
+        if (currentShadowSignature !== renderedShadowSignature) {
+            requestShadowUpdate();
+            renderedShadowSignature = currentShadowSignature;
+        }
+        return true;
+    }
+
+    function updateCelestialPositions(timeOfDay, focusPositions = null, updateShadowFocus = true) {
         const sunAngle = timeOfDay * FULL_TURN - Math.PI / 2;
         const moonAngle = sunAngle + Math.PI;
 
@@ -215,27 +298,33 @@ export function createDayNightCycle(scene, camera, renderer = null) {
         moonDirection.set(Math.cos(moonAngle) * 0.55, Math.sin(moonAngle), 0.58).normalize();
 
         camera.getWorldPosition(cameraWorldPosition);
-        sun.position.copy(cameraWorldPosition).addScaledVector(sunDirection, radius);
-        moon.position.copy(cameraWorldPosition).addScaledVector(moonDirection, radius);
-        stars.position.copy(cameraWorldPosition);
+        getFocusCenter(focusPositions, cameraWorldPosition, focusCenterPosition);
+        sun.position.copy(focusCenterPosition).addScaledVector(sunDirection, radius);
+        moon.position.copy(focusCenterPosition).addScaledVector(moonDirection, radius);
+        stars.position.copy(focusCenterPosition);
 
-        if (shadowsEnabled) {
-            const focusX = Math.round(cameraWorldPosition.x / shadowFocusGrid) * shadowFocusGrid;
-            const focusZ = Math.round(cameraWorldPosition.z / shadowFocusGrid) * shadowFocusGrid;
+        if (shadowsEnabled && updateShadowFocus) {
+            const focusRadius = getFocusRadius(focusPositions, focusCenterPosition);
+            const shadowDistance = baseShadowDistance + focusRadius + shadowFocusPadding;
+            const focusX = Math.round(focusCenterPosition.x / shadowFocusGrid) * shadowFocusGrid;
+            const focusZ = Math.round(focusCenterPosition.z / shadowFocusGrid) * shadowFocusGrid;
             shadowFocusChanged = shadowFocusChanged
                 || Math.abs(focusX - lastShadowFocusX) >= shadowFocusGrid
                 || Math.abs(focusZ - lastShadowFocusZ) >= shadowFocusGrid;
-            lastShadowFocusX = focusX;
-            lastShadowFocusZ = focusZ;
-            shadowFocusPosition.set(focusX, cameraWorldPosition.y, focusZ);
+            setShadowFocusPosition(focusCenterPosition, shadowDistance);
+            if (shadowFocusChanged) renderedShadowSignature = '';
+        } else if (!shadowsEnabled) {
+            shadowFocusPosition.copy(focusCenterPosition);
         } else {
-            shadowFocusPosition.copy(cameraWorldPosition);
+            shadowFocusChanged = false;
         }
 
-        sunLight.position.copy(shadowFocusPosition).addScaledVector(sunDirection, shadowLightDistance);
-        sunLight.target.position.copy(shadowFocusPosition);
-        moonLight.position.copy(cameraWorldPosition).addScaledVector(moonDirection, 120);
-        moonLight.target.position.copy(cameraWorldPosition);
+        if (updateShadowFocus || !shadowsEnabled) {
+            sunLight.position.copy(shadowFocusPosition).addScaledVector(sunDirection, shadowLightDistance);
+            sunLight.target.position.copy(shadowFocusPosition);
+        }
+        moonLight.position.copy(focusCenterPosition).addScaledVector(moonDirection, 120);
+        moonLight.target.position.copy(focusCenterPosition);
 
         lightingState.sunDirection.copy(sunDirection);
         lightingState.moonDirection.copy(moonDirection);
@@ -262,7 +351,10 @@ export function createDayNightCycle(scene, camera, renderer = null) {
         sunLight.color.copy(sunDayColor).lerp(sunHorizonColor, horizonWarmth * 0.45);
         const wasCastingShadow = sunLight.castShadow;
         sunLight.castShadow = shadowsEnabled && dayAmount > 0.04;
-        if (sunLight.castShadow !== wasCastingShadow) requestShadowUpdate();
+        if (sunLight.castShadow !== wasCastingShadow) {
+            renderedShadowSignature = '';
+            requestShadowUpdate();
+        }
 
         moonLight.intensity = THREE.MathUtils.lerp(0.01, 0.18, nightAmount);
         skyLight.intensity = THREE.MathUtils.lerp(0.18, 0.76, dayAmount) + nightAmount * 0.08;
@@ -289,11 +381,12 @@ export function createDayNightCycle(scene, camera, renderer = null) {
         lightingState.skyIntensity = skyLight.intensity;
     }
 
-    function update(deltaSeconds) {
+    function update(deltaSeconds, focusPositions = null, options = {}) {
+        const updateShadowFocus = options.updateShadowFocus !== false;
         elapsedSeconds = (elapsedSeconds + deltaSeconds) % cycleDurationSeconds;
         const timeOfDay = elapsedSeconds / cycleDurationSeconds;
 
-        updateCelestialPositions(timeOfDay);
+        updateCelestialPositions(timeOfDay, focusPositions, updateShadowFocus);
 
         accumulatedLightUpdate += deltaSeconds;
         if (accumulatedLightUpdate >= updateInterval) {
@@ -303,10 +396,14 @@ export function createDayNightCycle(scene, camera, renderer = null) {
 
         if (manualShadowUpdates && sunLight.castShadow) {
             accumulatedShadowUpdate += deltaSeconds;
-            if (shadowFocusChanged || accumulatedShadowUpdate >= shadowUpdateInterval) {
+            if (updateShadowFocus && (shadowFocusChanged || accumulatedShadowUpdate >= shadowUpdateInterval)) {
+                renderedShadowSignature = '';
                 requestShadowUpdate();
                 accumulatedShadowUpdate = 0;
                 shadowFocusChanged = false;
+            } else if (!updateShadowFocus && accumulatedShadowUpdate >= shadowUpdateInterval) {
+                renderedShadowSignature = '';
+                accumulatedShadowUpdate = 0;
             }
         }
     }
@@ -328,5 +425,5 @@ export function createDayNightCycle(scene, camera, renderer = null) {
         return lightingState;
     }
 
-    return { update, dispose, getLightingState, requestShadowUpdate };
+    return { update, dispose, getLightingState, requestShadowUpdate, prepareRenderForFocus, prepareSharedRenderForFocuses };
 }
