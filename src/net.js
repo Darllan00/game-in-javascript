@@ -130,11 +130,15 @@ export function fetchRoomSeed(code, timeoutMs = 9000) {
 
         peer.on('open', () => {
             const conn = peer.connect(roomCodeToPeerId(code), { reliable: true });
+            conn.on('open', () => {
+                conn.send({ t: 'seedRequest' });
+            });
             conn.on('data', (data) => {
-                if (data && data.t === 'welcome' && data.seed) {
+                if (data && (data.t === 'welcome' || data.t === 'seed') && data.seed) {
                     finish(resolve, String(data.seed));
                 }
             });
+            conn.on('close', () => finish(reject, new Error('closed')));
             conn.on('error', (err) => finish(reject, err));
         });
         peer.on('error', (err) => finish(reject, err));

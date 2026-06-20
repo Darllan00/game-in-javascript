@@ -188,6 +188,11 @@ export function createOnlineMode({
     function handleHostData(conn, data) {
         if (!data || typeof data !== 'object') return;
         switch (data.t) {
+            case 'seedRequest': {
+                host.sendTo(conn, { t: 'seed', seed: seedText, code: room });
+                window.setTimeout(() => conn.close?.(), 80);
+                break;
+            }
             case 'join': {
                 if (roster.has(conn.peer)) break;
                 if (match.active) {
