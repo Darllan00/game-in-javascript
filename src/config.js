@@ -247,7 +247,7 @@ export const CONFIG = {
         }
     },
     cicloDiaNoite: {
-        duracaoMinutos: 5,
+        duracaoMinutos: 10,
         atualizacoesPorSegundo: 12,
         raioAstros: 900,
         quantidadeEstrelas: 300
@@ -366,3 +366,154 @@ export function getRenderQualityProfile() {
 export const COLORS = {
     dia: new THREE.Color(0x6bb8ff)
 };
+
+export const CONFIG_STORAGE_KEY = 'mundo3d-config-overrides';
+
+export const CONFIG_CONTROLS = [
+    {
+        id: 'performance',
+        label: 'Performance',
+        controls: [
+            { path: 'terreno.distanciaChunks', label: 'Distancia de terreno', type: 'number', min: 8, max: 120, step: 1, reload: true },
+            { path: 'terreno.tempoGeracaoChunksMs', label: 'Terreno parado ms', type: 'number', min: 0.5, max: 20, step: 0.5, reload: true },
+            { path: 'terreno.tempoGeracaoChunksMovendoMs', label: 'Terreno andando ms', type: 'number', min: 0.5, max: 20, step: 0.5, reload: true },
+            { path: 'terreno.chunksGeracaoPorTrocaMovendo', label: 'Chunks urgentes andando', type: 'number', min: 1, max: 32, step: 1, reload: true },
+            { path: 'renderizacao.qualidade', label: 'Qualidade render', type: 'select', options: ['low', 'balanced', 'high'], reload: true }
+        ]
+    },
+    {
+        id: 'world',
+        label: 'Mundo',
+        controls: [
+            { path: 'agua.ativa', label: 'Agua', type: 'boolean', reload: true },
+            { path: 'agua.distanciaChunks', label: 'Distancia agua', type: 'number', min: 0, max: 60, step: 1, reload: true },
+            { path: 'grama.ativa', label: 'Grama', type: 'boolean', reload: true },
+            { path: 'grama.distanciaChunks', label: 'Distancia grama', type: 'number', min: 0, max: 24, step: 1, reload: true },
+            { path: 'grama.tufosPorChunk', label: 'Tufos por chunk', type: 'number', min: 0, max: 5000, step: 50, reload: true },
+            { path: 'arvores.ativa', label: 'Arvores', type: 'boolean', reload: true },
+            { path: 'arvores.distanciaChunks', label: 'Distancia arvores', type: 'number', min: 0, max: 32, step: 1, reload: true },
+            { path: 'arvores.chunksPorFrameMovendo', label: 'Arvores andando/frame', type: 'number', min: 1, max: 24, step: 1, reload: true },
+            { path: 'arvores.chunksPorFrameParado', label: 'Arvores parado/frame', type: 'number', min: 1, max: 24, step: 1, reload: true }
+        ]
+    },
+    {
+        id: 'lighting',
+        label: 'Luz',
+        controls: [
+            { path: 'iluminacao.exposicao', label: 'Exposicao', type: 'number', min: 0.3, max: 2.2, step: 0.05, live: true },
+            { path: 'iluminacao.sombras.ativa', label: 'Sombras', type: 'boolean', reload: true },
+            { path: 'iluminacao.sombras.tamanhoMapa', label: 'Resolucao sombras', type: 'select-number', options: [512, 1024, 2048, 4096], reload: true },
+            { path: 'iluminacao.sombras.distancia', label: 'Distancia sombras', type: 'number', min: 30, max: 260, step: 10, reload: true },
+            { path: 'cicloDiaNoite.duracaoMinutos', label: 'Duracao dia/noite min', type: 'number', min: 1, max: 60, step: 1, reload: true }
+        ]
+    },
+    {
+        id: 'player',
+        label: 'Jogador',
+        controls: [
+            { path: 'movimento.velocidade', label: 'Velocidade', type: 'number', min: 2, max: 40, step: 0.5, live: true },
+            { path: 'movimento.pulo', label: 'Pulo', type: 'number', min: 4, max: 40, step: 0.5, live: true },
+            { path: 'movimento.gravidade', label: 'Gravidade', type: 'number', min: 4, max: 80, step: 1, live: true },
+            { path: 'mecanicas.dash.multiplicadorVelocidade', label: 'Forca dash', type: 'number', min: 1, max: 6, step: 0.25, live: true },
+            { path: 'mecanicas.dash.cooldown', label: 'Cooldown dash', type: 'number', min: 0.2, max: 10, step: 0.1, live: true },
+            { path: 'mecanicas.arco.tempoPorNivel', label: 'Tempo arco nivel', type: 'number', min: 0.1, max: 2, step: 0.05, live: true }
+        ]
+    }
+];
+
+export const CONFIG_DEFAULTS = JSON.parse(JSON.stringify(CONFIG));
+
+export function getConfigValue(path, source = CONFIG) {
+    return path.split('.').reduce((value, key) => value?.[key], source);
+}
+
+export function setConfigValue(path, value, target = CONFIG) {
+    const parts = path.split('.');
+    let cursor = target;
+    for (let i = 0; i < parts.length - 1; i++) {
+        cursor = cursor?.[parts[i]];
+        if (!cursor) return false;
+    }
+    cursor[parts[parts.length - 1]] = value;
+    return true;
+}
+
+function getControlByPath(path) {
+    for (const section of CONFIG_CONTROLS) {
+        const control = section.controls.find((item) => item.path === path);
+        if (control) return control;
+    }
+    return null;
+}
+
+function normalizeConfigValue(control, value) {
+    if (control.type === 'boolean') return Boolean(value);
+    if (control.type === 'select') return control.options.includes(value) ? value : getConfigValue(control.path, CONFIG_DEFAULTS);
+    if (control.type === 'select-number') {
+        const numericValue = Number(value);
+        return control.options.includes(numericValue) ? numericValue : getConfigValue(control.path, CONFIG_DEFAULTS);
+    }
+    const numericValue = Number(value);
+    if (!Number.isFinite(numericValue)) return getConfigValue(control.path, CONFIG_DEFAULTS);
+    return THREE.MathUtils.clamp(numericValue, control.min ?? -Infinity, control.max ?? Infinity);
+}
+
+export function readConfigOverrides() {
+    if (typeof window === 'undefined') return {};
+    try {
+        const parsed = JSON.parse(window.localStorage.getItem(CONFIG_STORAGE_KEY) || '{}');
+        return parsed && typeof parsed === 'object' && parsed.values ? parsed.values : {};
+    } catch {
+        return {};
+    }
+}
+
+export function writeConfigOverrides(values) {
+    if (typeof window === 'undefined') return;
+    try {
+        window.localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify({ values }));
+    } catch {
+        /* noop */
+    }
+}
+
+export function setConfigOverride(path, value) {
+    const control = getControlByPath(path);
+    if (!control) return false;
+    const values = readConfigOverrides();
+    const normalized = normalizeConfigValue(control, value);
+    const defaultValue = getConfigValue(path, CONFIG_DEFAULTS);
+    if (normalized === defaultValue) {
+        delete values[path];
+    } else {
+        values[path] = normalized;
+    }
+    writeConfigOverrides(values);
+    return setConfigValue(path, normalized);
+}
+
+export function resetConfigOverrides() {
+    if (typeof window !== 'undefined') {
+        try {
+            window.localStorage.removeItem(CONFIG_STORAGE_KEY);
+        } catch {
+            /* noop */
+        }
+    }
+    for (const section of CONFIG_CONTROLS) {
+        for (const control of section.controls) {
+            setConfigValue(control.path, getConfigValue(control.path, CONFIG_DEFAULTS));
+        }
+    }
+}
+
+export function applyStoredConfigOverrides() {
+    const overrides = readConfigOverrides();
+    for (const [path, value] of Object.entries(overrides)) {
+        const control = getControlByPath(path);
+        if (!control) continue;
+        setConfigValue(path, normalizeConfigValue(control, value));
+    }
+}
+
+applyStoredConfigOverrides();

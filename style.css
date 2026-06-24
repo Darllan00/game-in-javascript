@@ -73,6 +73,211 @@ canvas {
     box-sizing: border-box;
 }
 
+.config-ui {
+    --config-bg: rgba(8, 12, 14, 0.88);
+    --config-border: rgba(255, 255, 255, 0.2);
+    --config-text: rgba(255, 255, 255, 0.9);
+    --config-muted: rgba(255, 255, 255, 0.58);
+    --config-accent: rgb(110, 181, 255);
+    position: fixed;
+    top: max(12px, env(safe-area-inset-top));
+    left: max(14px, env(safe-area-inset-left));
+    z-index: 24;
+    color: var(--config-text);
+    font: 12px/1.25 Arial, sans-serif;
+    pointer-events: none;
+}
+
+.config-toggle {
+    pointer-events: auto;
+    border: 1px solid var(--config-border);
+    border-radius: 4px;
+    background: rgba(0, 0, 0, 0.38);
+    color: var(--config-text);
+    padding: 6px 9px;
+    font: inherit;
+    cursor: pointer;
+}
+
+.config-toggle:hover {
+    background: rgba(255, 255, 255, 0.12);
+}
+
+.config-panel {
+    position: absolute;
+    top: 38px;
+    left: 0;
+    display: none;
+    width: min(360px, calc(100dvw - 28px));
+    max-height: min(680px, calc(100dvh - 66px));
+    overflow: hidden;
+    border: 1px solid var(--config-border);
+    border-radius: 6px;
+    background: var(--config-bg);
+    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.34);
+    pointer-events: auto;
+}
+
+.config-ui.is-open .config-panel {
+    display: grid;
+    grid-template-rows: auto auto minmax(0, 1fr) auto auto;
+}
+
+.config-title-row,
+.config-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 10px;
+}
+
+.config-title {
+    font-weight: 700;
+    font-size: 14px;
+}
+
+.config-close,
+.config-action,
+.config-tab {
+    border: 1px solid var(--config-border);
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--config-text);
+    padding: 6px 8px;
+    font: inherit;
+    cursor: pointer;
+}
+
+.config-close:hover,
+.config-action:hover,
+.config-tab:hover {
+    background: rgba(255, 255, 255, 0.15);
+}
+
+.config-primary {
+    border-color: rgba(110, 181, 255, 0.68);
+    background: rgba(110, 181, 255, 0.18);
+}
+
+.config-tabs {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 4px;
+    padding: 0 10px 8px;
+}
+
+.config-tab {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.config-tab.is-active {
+    border-color: rgba(110, 181, 255, 0.82);
+    color: white;
+    background: rgba(110, 181, 255, 0.22);
+}
+
+.config-content {
+    min-height: 0;
+    overflow: auto;
+    padding: 0 10px 8px;
+}
+
+.config-section {
+    display: none;
+    flex-direction: column;
+    gap: 7px;
+}
+
+.config-section.is-active {
+    display: flex;
+}
+
+.config-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+        "header input"
+        "default input";
+    gap: 2px 10px;
+    align-items: center;
+    padding: 7px 8px;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.055);
+}
+
+.config-row-header {
+    grid-area: header;
+    display: flex;
+    min-width: 0;
+    gap: 8px;
+    align-items: baseline;
+    justify-content: space-between;
+}
+
+.config-row-title {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.config-row-value {
+    color: var(--config-accent);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.config-row-default {
+    grid-area: default;
+    color: var(--config-muted);
+    font-size: 11px;
+}
+
+.config-number,
+.config-select {
+    grid-area: input;
+    width: 82px;
+    box-sizing: border-box;
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    border-radius: 4px;
+    background: rgba(0, 0, 0, 0.35);
+    color: white;
+    padding: 5px 6px;
+    font: inherit;
+}
+
+.config-checkbox {
+    grid-area: input;
+    width: 20px;
+    height: 20px;
+    margin: 0;
+    accent-color: var(--config-accent);
+}
+
+.config-status {
+    min-height: 1.25em;
+    padding: 7px 10px 0;
+    color: var(--config-muted);
+}
+
+.config-status.is-warning {
+    color: rgba(255, 211, 120, 0.94);
+}
+
+@media (max-width: 520px) {
+    .config-panel {
+        width: calc(100dvw - 28px);
+    }
+
+    .config-tabs {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
 #combat-hud {
     position: fixed;
     inset: 0;

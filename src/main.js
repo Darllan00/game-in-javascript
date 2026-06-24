@@ -13,6 +13,7 @@ import { createCombatHud } from './combatHud.js';
 import { createMinimapHud } from './minimapHud.js';
 import { createUnderwaterEffect } from './underwaterEffect.js';
 import { CONFIG } from './config.js';
+import { createConfigPanel } from './configPanel.js';
 import {
     GAME_MODE,
     buildModeUrl,
@@ -72,6 +73,7 @@ const arrows = createArrowSystem(scene, getHeight, diagnostics, {
 const combatHud = createCombatHud();
 const minimapHud = createMinimapHud(getSample);
 const underwaterEffect = createUnderwaterEffect(getSample);
+const configPanel = createConfigPanel({ renderer });
 setChunkLifecycle({
     onChunkDisposed(chunk) {
         water.disposeChunk(chunk);
@@ -408,6 +410,7 @@ window.addEventListener('beforeunload', () => {
     combatHud.dispose();
     minimapHud.dispose();
     underwaterEffect.dispose();
+    configPanel.dispose();
     mode.dispose();
     dispose();
 });
