@@ -5,6 +5,7 @@ import { createPlayerVitals } from './playerVitals.js';
 import { createBowState, getBowHudState, setBowHeld, updateBowState } from './bow.js';
 import { createBowView, createCarriedBow } from './bowView.js';
 import { createDashState, getDashHudState, updateDashInput, updateDashState } from './dash.js';
+import { clampMouseDelta } from './pointerLockLook.js';
 
 const GAMEPAD_DEADZONE = 0.18;
 const MOUSE_SENSITIVITY = 0.0022;
@@ -388,8 +389,8 @@ export function createLocalCoopMode({
 
     function onMouseMove(event) {
         if (!isStarted || document.pointerLockElement !== document.body) return;
-        playerOne.yaw -= event.movementX * MOUSE_SENSITIVITY;
-        playerOne.pitch = clampPitch(playerOne.pitch - event.movementY * MOUSE_SENSITIVITY);
+        playerOne.yaw -= clampMouseDelta(event.movementX) * MOUSE_SENSITIVITY;
+        playerOne.pitch = clampPitch(playerOne.pitch - clampMouseDelta(event.movementY) * MOUSE_SENSITIVITY);
     }
 
     function onMouseDown(event) {
@@ -414,6 +415,7 @@ export function createLocalCoopMode({
     window.addEventListener('mouseup', onMouseUp);
 
     function createShot(player, level) {
+        player.camera.updateWorldMatrix(true, false);
         player.camera.getWorldDirection(shotDirection).normalize();
         player.camera.getWorldPosition(shotOrigin);
         shotOrigin.addScaledVector(shotDirection, BOW_CONFIG.distanciaSpawn ?? 0.85);

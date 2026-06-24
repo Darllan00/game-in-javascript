@@ -1,4 +1,4 @@
-import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
+import { StablePointerLockControls } from './pointerLockLook.js';
 
 export const keys = {
     w: false,
@@ -11,7 +11,7 @@ export const keys = {
 };
 
 export function setupControls(camera, options = {}) {
-    const controls = new PointerLockControls(camera, document.body);
+    const controls = new StablePointerLockControls(camera, document.body);
     const player = controls.getObject();
 
     const menu = document.getElementById('menu');

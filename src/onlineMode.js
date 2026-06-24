@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
+import { StablePointerLockControls } from './pointerLockLook.js';
 import { CONFIG } from './config.js';
 import { updatePlayerPhysics } from './physics.js';
 import { createPlayerVitals } from './playerVitals.js';
@@ -80,7 +80,7 @@ export function createOnlineMode({
     seedText,
     playerName
 }) {
-    const controls = new PointerLockControls(camera, document.body);
+    const controls = new StablePointerLockControls(camera, document.body);
     const player = controls.getObject();
     scene.add(player);
 
@@ -567,6 +567,7 @@ export function createOnlineMode({
     }
 
     function createShot(level) {
+        camera.updateWorldMatrix(true, false);
         camera.getWorldDirection(shotDirection).normalize();
         camera.getWorldPosition(shotOrigin);
         shotOrigin.addScaledVector(shotDirection, BOW_CONFIG.distanciaSpawn ?? 0.85);
@@ -822,6 +823,7 @@ export function createOnlineMode({
     function dispose() {
         controls.removeEventListener('lock', onLock);
         controls.removeEventListener('unlock', onUnlock);
+        controls.dispose?.();
         window.removeEventListener('keydown', onKeyDown);
         window.removeEventListener('keyup', onKeyUp);
         window.removeEventListener('mousedown', onMouseDown);

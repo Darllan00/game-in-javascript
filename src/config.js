@@ -5,7 +5,7 @@ export const CONFIG = {
         tamanhoGrade: 50000,
         alturaOlhos: 2,
         tamanhoChunk: 32,
-        distanciaChunks: 20,
+        distanciaChunks: 40,
         distanciaPreloadChunks: 1,
         bufferTransicaoChunksMovendo: 2,
         distanciaSuperChunksCobertura: 20,
@@ -336,7 +336,7 @@ export const CONFIG = {
         pesoMaximoMontanha: 0.36,
         enterraNoTerreno: 5.0,
         lod: {
-            ativo: true,
+            ativo: false,
             asset: 'assets/arvore leve.glb',
             distanciaChunks: 16,
             esconderAteDistanciaChunks: 6,

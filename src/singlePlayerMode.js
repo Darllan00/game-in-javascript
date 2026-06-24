@@ -52,6 +52,7 @@ export function createSinglePlayerMode({
     window.addEventListener('mouseup', onMouseUp);
 
     function createShot(level) {
+        camera.updateWorldMatrix(true, false);
         camera.getWorldDirection(shotDirection).normalize();
         camera.getWorldPosition(shotOrigin);
         shotOrigin.addScaledVector(shotDirection, BOW_CONFIG.distanciaSpawn ?? 0.85);
@@ -147,6 +148,7 @@ export function createSinglePlayerMode({
     function dispose() {
         window.removeEventListener('mousedown', onMouseDown);
         window.removeEventListener('mouseup', onMouseUp);
+        controls.dispose?.();
         bowView.dispose();
         scene.remove(player);
     }

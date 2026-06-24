@@ -109,7 +109,7 @@ export function createBowView(scene, camera, { layer = 0 } = {}) {
         bow.group.visible = Boolean(isVisible);
         if (!bow.group.visible) return;
 
-        camera.updateMatrixWorld();
+        camera.updateWorldMatrix(true, false);
         worldPosition.copy(localOffset).applyMatrix4(camera.matrixWorld);
         bow.group.position.copy(worldPosition);
         bow.group.quaternion.copy(camera.quaternion).multiply(rotationOffset);
